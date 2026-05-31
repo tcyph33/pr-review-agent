@@ -1,14 +1,14 @@
 # PR Review Agent
 
-A nightly Node.js script that finds GitHub PRs requesting your review, runs each one through a Claude agent using your review skill (pulled live from a separate repo), and saves feedback locally. A self-hosted HTML dashboard lets you read all feedback and open every PR in a new tab.
+A nightly TypeScript script that finds GitHub PRs requesting your review, runs each one through a Claude agent using your review skill (pulled live from a separate repo), and saves feedback locally. A self-hosted HTML dashboard lets you read all feedback and open every PR in a new tab.
 
 ---
 
 ## How It Works
 
-1. **launchd** triggers `run-reviews.js` on a schedule
+1. **launchd** triggers `run-reviews.ts` on a nightly schedule via `tsx`
 2. The script fetches your review skill `.md` live from your skills repo
-3. It queries GitHub for open PRs where you are a requested reviewer
+3. It resolves your GitHub username automatically from your token
 4. Each PR's diff, files, and description are sent to a Claude agent in parallel
 5. Results are saved to `results/reviews.json`
 6. A persistent local server serves the dashboard at `http://localhost:3000/dashboard/`
@@ -24,7 +24,8 @@ pr-review-agent/
 ├── .env                  # your keys — never committed
 ├── .gitignore
 ├── package.json
-├── run-reviews.js        # the nightly agent script
+├── tsconfig.json
+├── run-reviews.ts        # the nightly agent script
 ├── setup.sh              # one-time setup script
 ├── dashboard/
 │   └── index.html        # self-hosted review dashboard
@@ -46,7 +47,7 @@ bash setup.sh
 ```
 
 `setup.sh` handles everything automatically:
-- Installs npm dependencies
+- Installs npm dependencies (including `tsx` and TypeScript)
 - Creates `logs/` and `results/` directories
 - Copies `.env.example` to `.env` (if `.env` doesn't already exist)
 - Generates both launchd plists with the correct absolute paths for this machine
@@ -60,14 +61,14 @@ The script reads credentials from `process.env`. You have two options — pick e
 ```
 GITHUB_TOKEN=ghp_yourTokenHere
 ANTHROPIC_API_KEY=sk-ant-yourKeyHere
-REVIEW_SKILL_URL=https://raw.githubusercontent.com/you/skills-repo/main/pr-review.md
+REVIEW_SKILL_URL=https://raw.githubusercontent.com/tcyph33/your-skills-repo/main/pr-review.md
 ```
 
 **Option B — environment variables** set in your shell profile or system:
 ```bash
 export GITHUB_TOKEN=ghp_yourTokenHere
 export ANTHROPIC_API_KEY=sk-ant-yourKeyHere
-export REVIEW_SKILL_URL=https://raw.githubusercontent.com/you/skills-repo/main/pr-review.md
+export REVIEW_SKILL_URL=https://raw.githubusercontent.com/tcyph33/your-skills-repo/main/pr-review.md
 ```
 
 If a variable is set in the environment it takes precedence over `.env`. If you use environment variables exclusively, you can leave `.env` as-is or delete it.
@@ -89,13 +90,14 @@ Expected output:
 🚀  PR Review Agent starting...
 📥  Fetching review skill from https://raw.githubusercontent.com/...
     Loaded 1842 characters.
-🔍  Searching for PRs requesting review from yourname...
+🔍  Searching for PRs requesting review from tcyph33...
     Found 3 PR(s) needing review.
 📋  Reviewing 3 PR(s) in parallel...
   🤖  Reviewing PR #42 in org/repo: "Add login flow"
   🤖  Reviewing PR #17 in org/repo2: "Fix null pointer"
 ✅  Completed 3/3 reviews.
 💾  Results saved to results/reviews.json
+Done! Open http://localhost:3000/dashboard/ to view the dashboard.
 ```
 
 ---

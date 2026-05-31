@@ -23,12 +23,11 @@ fi
 # ── launchd ───────────────────────────────────────────────────────────────────
 
 REPO_PATH=$(pwd)
-NODE_PATH=$(which node)
 NPX_PATH=$(which npx)
 
 echo "⚙️   Writing launchd plists..."
 
-cat > ~/Library/LaunchAgents/com.pr-review-agent.plist << EOF
+cat > ~/Library/LaunchAgents/com.pr-review-agent.plist << PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -38,8 +37,9 @@ cat > ~/Library/LaunchAgents/com.pr-review-agent.plist << EOF
   <string>com.pr-review-agent</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$NODE_PATH</string>
-    <string>$REPO_PATH/run-reviews.js</string>
+    <string>$NPX_PATH</string>
+    <string>tsx</string>
+    <string>$REPO_PATH/run-reviews.ts</string>
   </array>
   <key>WorkingDirectory</key>
   <string>$REPO_PATH</string>
@@ -58,9 +58,9 @@ cat > ~/Library/LaunchAgents/com.pr-review-agent.plist << EOF
   <false/>
 </dict>
 </plist>
-EOF
+PLIST
 
-cat > ~/Library/LaunchAgents/com.pr-review-dashboard.plist << EOF
+cat > ~/Library/LaunchAgents/com.pr-review-dashboard.plist << PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -88,7 +88,7 @@ cat > ~/Library/LaunchAgents/com.pr-review-dashboard.plist << EOF
   <string>$REPO_PATH/logs/dashboard-err.log</string>
 </dict>
 </plist>
-EOF
+PLIST
 
 echo "⚙️   Loading launchd jobs..."
 launchctl load ~/Library/LaunchAgents/com.pr-review-agent.plist

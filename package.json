@@ -3,14 +3,19 @@
   "version": "1.0.0",
   "description": "Nightly GitHub PR review agent powered by Claude",
   "type": "module",
-  "main": "run-reviews.js",
+  "main": "run-reviews.ts",
   "scripts": {
-    "start": "node run-reviews.js",
-    "review": "node run-reviews.js"
+    "start": "npx tsx run-reviews.ts",
+    "review": "npx tsx run-reviews.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "@octokit/rest": "^21.0.0",
     "dotenv": "^16.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
   }
 }
