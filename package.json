@@ -1,0 +1,16 @@
+{
+  "name": "pr-review-agent",
+  "version": "1.0.0",
+  "description": "Nightly GitHub PR review agent powered by Claude",
+  "type": "module",
+  "main": "run-reviews.js",
+  "scripts": {
+    "start": "node -r dotenv/config run-reviews.js",
+    "review": "node -r dotenv/config run-reviews.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@octokit/rest": "^21.0.0",
+    "dotenv": "^16.4.0"
+  }
+}
