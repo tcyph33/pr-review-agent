@@ -44,12 +44,20 @@ cat > ~/Library/LaunchAgents/com.pr-review-agent.plist << PLIST
   <key>WorkingDirectory</key>
   <string>$REPO_PATH</string>
   <key>StartCalendarInterval</key>
-  <dict>
-    <key>Hour</key>
-    <integer>2</integer>
-    <key>Minute</key>
-    <integer>0</integer>
-  </dict>
+  <array>
+    <dict>
+      <key>Hour</key>
+      <integer>2</integer>
+      <key>Minute</key>
+      <integer>0</integer>
+    </dict>
+    <dict>
+      <key>Hour</key>
+      <integer>14</integer>
+      <key>Minute</key>
+      <integer>0</integer>
+    </dict>
+  </array>
   <key>StandardOutPath</key>
   <string>$REPO_PATH/logs/out.log</string>
   <key>StandardErrorPath</key>
@@ -102,5 +110,5 @@ echo "   1. Set your keys in .env, or export them as environment variables"
 echo "   2. Test manually: npm run review"
 echo "   3. Dashboard: http://localhost:3000/dashboard/"
 echo ""
-echo "   The review script will run nightly at 2am."
+echo "   The review script will run at 2am and 2pm daily."
 echo "   The dashboard server is running now in the background."

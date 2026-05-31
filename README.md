@@ -11,7 +11,7 @@ A nightly TypeScript script that finds GitHub PRs requesting your review, runs e
 3. It resolves your GitHub username automatically from your token
 4. Each PR's diff, files, and description are sent to a Claude agent in parallel
 5. Results are saved to `results/reviews.json`
-6. A persistent local server serves the dashboard at `http://localhost:3000/dashboard/`
+6. `server.ts` serves the dashboard and handles dismiss/clear API calls at `http://localhost:3000/dashboard/`
 7. Open the dashboard to read feedback and open all PRs in new tabs
 
 ---
@@ -113,13 +113,13 @@ Open **http://localhost:3000/dashboard/** in any browser.
 - **Open All PRs in Tabs** opens every PR at once
 - Auto-refreshes every 60 seconds
 
-The dashboard server starts automatically at login via launchd and restarts itself if it ever crashes.
+The dashboard server (`server.ts`) starts automatically at login via launchd and restarts itself if it ever crashes. It serves the dashboard and handles the delete API calls that power the dismiss and clear all buttons.
 
 ---
 
 ## Scheduling (macOS only)
 
-The nightly review script runs at 2:00 AM via launchd (configured by `setup-macos.sh`).
+The review script runs at 2:00 AM and 2:00 PM daily via launchd (configured by `setup-macos.sh`). After each run, a macOS notification fires showing how many reviews are new and how many were updated.
 
 > **Note:** launchd skips runs while the laptop is asleep and does not catch up on missed runs.
 > If your laptop is usually closed at 2am, change the hour in the plist to a time it's reliably awake,

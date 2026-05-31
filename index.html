@@ -112,7 +112,11 @@
     .badge-files  { background: #1a2a1a; color: #3fb950; }
     .badge-add    { background: #1a2a1a; color: #3fb950; }
     .badge-del    { background: #2a1a1a; color: #f85149; }
-    .badge-time   { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
+    .badge-time            { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
+    .badge-state-pending   { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
+    .badge-state-commented { background: #1f2d3d; color: #58a6ff; border: 1px solid #1f4070; }
+    .badge-state-changes   { background: #2a1a0a; color: #e3b341; border: 1px solid #5a3800; }
+    .badge-state-approved  { background: #1a2a1a; color: #3fb950; border: 1px solid #1a4a1a; }
 
     .card-actions { display: flex; gap: 6px; flex-shrink: 0; }
 
@@ -260,7 +264,7 @@
               <span class="badge badge-files">${r.filesChanged} file${r.filesChanged !== 1 ? "s" : ""}</span>
               <span class="badge badge-add">+${r.additions}</span>
               <span class="badge badge-del">-${r.deletions}</span>
-              <span class="badge badge-time">${timeAgo(r.reviewedAt)}</span>
+              <span class="badge badge-time">${timeAgo(r.reviewedAt)}</span>\n              ${reviewStateBadge(r.reviewState || "PENDING")}
             </div>
           </div>
           <div class="card-actions">
@@ -287,6 +291,17 @@
 
   function openAll() {
     reviews.forEach(r => window.open(r.url, "_blank"));
+  }
+
+  function reviewStateBadge(state) {
+    const map = {
+      PENDING:           ['badge-state-pending',   '● Pending'],
+      COMMENTED:         ['badge-state-commented', '● Commented'],
+      CHANGES_REQUESTED: ['badge-state-changes',   '● Changes requested'],
+      APPROVED:          ['badge-state-approved',  '✓ Approved'],
+    };
+    const [cls, label] = map[state] || map['PENDING'];
+    return `<span class="badge ${cls}">${label}</span>`;
   }
 
   function escHtml(str) {

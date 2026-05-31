@@ -4,6 +4,7 @@ import "dotenv/config";
 import Anthropic from "@anthropic-ai/sdk";
 import { Octokit } from "@octokit/rest";
 import type { RestEndpointMethodTypes } from "@octokit/rest";
+import { execSync } from "child_process";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -11,6 +12,8 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ── Types ─────────────────────────────────────────────────────────────────────
+
+type ReviewState = "PENDING" | "COMMENTED" | "CHANGES_REQUESTED" | "APPROVED";
 
 interface PRReview {
   id: string;
@@ -24,6 +27,7 @@ interface PRReview {
   additions: number;
   deletions: number;
   feedback: string;
+  reviewState: ReviewState;
   prCreatedAt: string;
   reviewedAt: string;
 }
@@ -67,10 +71,9 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
-// Safe to assert non-null after validation above
-const githubToken      = GITHUB_TOKEN!;
-const anthropicApiKey  = ANTHROPIC_API_KEY!;
-const reviewSkillUrl   = REVIEW_SKILL_URL!;
+const githubToken     = GITHUB_TOKEN!;
+const anthropicApiKey = ANTHROPIC_API_KEY!;
+const reviewSkillUrl  = REVIEW_SKILL_URL!;
 
 // ── Clients ───────────────────────────────────────────────────────────────────
 
@@ -78,6 +81,16 @@ const octokit   = new Octokit({ auth: githubToken });
 const anthropic = new Anthropic({ apiKey: anthropicApiKey });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+function notify(title: string, message: string): void {
+  try {
+    const escaped = message.replace(/'/g, "\\'");
+    const escapedTitle = title.replace(/'/g, "\\'");
+    execSync(`osascript -e 'display notification "${escaped}" with title "${escapedTitle}"'`);
+  } catch {
+    // notifications are best-effort — never crash the script over them
+  }
+}
 
 async function fetchReviewSkill(): Promise<string> {
   console.log(`📥  Fetching review skill from ${reviewSkillUrl} ...`);
@@ -96,7 +109,7 @@ async function fetchReviewSkill(): Promise<string> {
   return text;
 }
 
-async function getPRsNeedingReview(): Promise<SearchPRItem[]> {
+async function getPRsNeedingReview(): Promise<{ items: SearchPRItem[]; username: string }> {
   const { data: user } = await octokit.rest.users.getAuthenticated();
   const username = user.login;
   console.log(`\n🔍  Searching for PRs requesting review from ${username}...`);
@@ -105,14 +118,12 @@ async function getPRsNeedingReview(): Promise<SearchPRItem[]> {
     per_page: 50,
   });
   console.log(`    Found ${data.items.length} PR(s) needing review.`);
-  return data.items;
+  return { items: data.items, username };
 }
 
 async function getPRDiff(owner: string, repo: string, pull_number: number): Promise<string> {
   const { data } = await octokit.rest.pulls.get({
-    owner,
-    repo,
-    pull_number,
+    owner, repo, pull_number,
     mediaType: { format: "diff" },
   });
   return data as unknown as string;
@@ -125,12 +136,31 @@ async function getPRDetails(owner: string, repo: string, pull_number: number): P
 
 async function getPRFiles(owner: string, repo: string, pull_number: number): Promise<PRFile[]> {
   const { data } = await octokit.rest.pulls.listFiles({
-    owner,
-    repo,
-    pull_number,
+    owner, repo, pull_number,
     per_page: 100,
   });
   return data;
+}
+
+async function getMyReviewState(
+  owner: string,
+  repo: string,
+  pull_number: number,
+  username: string
+): Promise<ReviewState> {
+  try {
+    const { data } = await octokit.rest.pulls.listReviews({ owner, repo, pull_number });
+    const mine = data.filter((r) => r.user?.login === username);
+    if (mine.length === 0) return "PENDING";
+    const latest = mine[mine.length - 1];
+    const state = latest.state as string;
+    if (state === "APPROVED")          return "APPROVED";
+    if (state === "CHANGES_REQUESTED") return "CHANGES_REQUESTED";
+    if (state === "COMMENTED")         return "COMMENTED";
+    return "PENDING";
+  } catch {
+    return "PENDING";
+  }
 }
 
 function parseRepoFromUrl(url: string): ParsedRepo | null {
@@ -139,7 +169,11 @@ function parseRepoFromUrl(url: string): ParsedRepo | null {
   return { owner: match[1], repo: match[2], pull_number: parseInt(match[3], 10) };
 }
 
-async function reviewPR(pr: SearchPRItem, reviewSkill: string): Promise<PRReview | null> {
+async function reviewPR(
+  pr: SearchPRItem,
+  reviewSkill: string,
+  username: string
+): Promise<PRReview | null> {
   const prUrl = pr.pull_request?.url;
   if (!prUrl) {
     console.warn(`  ⚠️  No pull_request URL for: ${pr.html_url}`);
@@ -158,12 +192,14 @@ async function reviewPR(pr: SearchPRItem, reviewSkill: string): Promise<PRReview
   let diff: string;
   let files: PRFile[];
   let details: PRDetails;
+  let reviewState: ReviewState;
 
   try {
-    [diff, files, details] = await Promise.all([
+    [diff, files, details, reviewState] = await Promise.all([
       getPRDiff(owner, repo, pull_number),
       getPRFiles(owner, repo, pull_number),
       getPRDetails(owner, repo, pull_number),
+      getMyReviewState(owner, repo, pull_number, username),
     ]);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -217,12 +253,13 @@ ${diff.slice(0, 20000)}
     additions: files.reduce((s, f) => s + f.additions, 0),
     deletions: files.reduce((s, f) => s + f.deletions, 0),
     feedback,
+    reviewState,
     prCreatedAt: details.created_at,
     reviewedAt: new Date().toISOString(),
   };
 }
 
-function saveResults(reviews: PRReview[]): void {
+function saveResults(incoming: PRReview[]): { newCount: number; updatedCount: number } {
   const dir = path.dirname(RESULTS_PATH);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
@@ -236,7 +273,11 @@ function saveResults(reviews: PRReview[]): void {
     }
   }
 
-  for (const review of reviews) {
+  const existingIds = new Set(Object.keys(existing));
+  const newCount     = incoming.filter((r) => !existingIds.has(r.id)).length;
+  const updatedCount = incoming.filter((r) => existingIds.has(r.id)).length;
+
+  for (const review of incoming) {
     existing[review.id] = review;
   }
 
@@ -246,6 +287,8 @@ function saveResults(reviews: PRReview[]): void {
 
   fs.writeFileSync(RESULTS_PATH, JSON.stringify(sorted, null, 2));
   console.log(`\n💾  Results saved to ${RESULTS_PATH}`);
+
+  return { newCount, updatedCount };
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -254,7 +297,7 @@ async function main(): Promise<void> {
   console.log("🚀  PR Review Agent starting...\n");
 
   const reviewSkill = await fetchReviewSkill();
-  const prs = await getPRsNeedingReview();
+  const { items: prs, username } = await getPRsNeedingReview();
 
   if (prs.length === 0) {
     console.log("\n✅  No PRs needing review. All clear!");
@@ -263,13 +306,20 @@ async function main(): Promise<void> {
 
   console.log(`\n📋  Reviewing ${prs.length} PR(s) in parallel...\n`);
 
-  const results = await Promise.all(prs.map((pr) => reviewPR(pr, reviewSkill)));
+  const results = await Promise.all(prs.map((pr) => reviewPR(pr, reviewSkill, username)));
   const successful = results.filter((r): r is PRReview => r !== null);
 
   console.log(`\n✅  Completed ${successful.length}/${prs.length} reviews.`);
 
-  saveResults(successful);
+  const { newCount, updatedCount } = saveResults(successful);
 
+  const parts: string[] = [];
+  if (newCount > 0)     parts.push(`${newCount} new`);
+  if (updatedCount > 0) parts.push(`${updatedCount} updated`);
+  const summary = parts.length > 0 ? parts.join(", ") : `${successful.length} reviews ready`;
+
+  notify("PR Review Agent", summary);
+  console.log(`🔔  Notification sent: ${summary}`);
   console.log("\nDone! Open http://localhost:3000/dashboard/ to view the dashboard.");
 }
 
