@@ -67,14 +67,14 @@ The script reads credentials from `process.env`. You have two options — pick e
 ```
 GITHUB_TOKEN=ghp_yourTokenHere
 ANTHROPIC_API_KEY=sk-ant-yourKeyHere
-REVIEW_SKILL_URL=https://raw.githubusercontent.com/tcyph33/your-skills-repo/main/pr-review.md
+REVIEW_SKILL_URL=https://raw.githubusercontent.com/tcyph33/claude-toolkit/refs/heads/main/skills/code-review/SKILL.md
 ```
 
 **Option B — environment variables** set in your shell profile or system:
 ```bash
 export GITHUB_TOKEN=ghp_yourTokenHere
 export ANTHROPIC_API_KEY=sk-ant-yourKeyHere
-export REVIEW_SKILL_URL=https://raw.githubusercontent.com/tcyph33/your-skills-repo/main/pr-review.md
+export REVIEW_SKILL_URL=https://raw.githubusercontent.com/tcyph33/claude-toolkit/refs/heads/main/skills/code-review/SKILL.md
 ```
 
 If a variable is set in the environment it takes precedence over `.env`. If you use environment variables exclusively, you can leave `.env` as-is or delete it.
