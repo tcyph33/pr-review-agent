@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import "dotenv/config";
 import Anthropic from "@anthropic-ai/sdk";
 import { Octokit } from "@octokit/rest";
 import fs from "fs";
@@ -12,20 +13,19 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const GITHUB_TOKEN       = process.env.GITHUB_TOKEN;
 const ANTHROPIC_API_KEY  = process.env.ANTHROPIC_API_KEY;
-const GITHUB_USERNAME    = process.env.GITHUB_USERNAME || "<your_gh_username>";
 const REVIEW_SKILL_URL   = process.env.REVIEW_SKILL_URL; // raw GitHub URL to your skill .md
 const RESULTS_PATH       = path.join(__dirname, "results", "reviews.json");
 
-if (!GITHUB_TOKEN || !ANTHROPIC_API_KEY) {
-  console.error("❌  Missing GITHUB_TOKEN or ANTHROPIC_API_KEY in environment.");
-  console.error("    Copy .env.example to .env and fill in your keys.");
-  process.exit(1);
-}
+const missing = [
+  ['GITHUB_TOKEN',      GITHUB_TOKEN],
+  ['ANTHROPIC_API_KEY', ANTHROPIC_API_KEY],
+  ['REVIEW_SKILL_URL',  REVIEW_SKILL_URL],
+].filter(([, v]) => !v).map(([k]) => k);
 
-if (!REVIEW_SKILL_URL) {
-  console.error("❌  Missing REVIEW_SKILL_URL in environment.");
-  console.error("    Set it to the raw GitHub URL of your review skill .md file.");
-  console.error("    e.g. https://raw.githubusercontent.com/you/skills-repo/main/pr-review.md");
+if (missing.length > 0) {
+  console.error(`❌  Missing required variables: ${missing.join(', ')}`);
+  console.error('    Set them in the environment directly, or add them to a .env file in the repo root.');
+  console.error('    See .env.example for reference.');
   process.exit(1);
 }
 
@@ -54,9 +54,11 @@ async function fetchReviewSkill() {
 }
 
 async function getPRsNeedingReview() {
-  console.log(`\n🔍  Searching for PRs requesting review from ${GITHUB_USERNAME}...`);
+  const { data: user } = await octokit.rest.users.getAuthenticated();
+  const username = user.login;
+  console.log(`\n🔍  Searching for PRs requesting review from ${username}...`);
   const { data } = await octokit.rest.search.issuesAndPullRequests({
-    q: `is:pr is:open review-requested:${GITHUB_USERNAME}`,
+    q: `is:pr is:open review-requested:${username}`,
     per_page: 50,
   });
   console.log(`    Found ${data.items.length} PR(s) needing review.`);
@@ -210,7 +212,7 @@ async function main() {
 
   saveResults(successful);
 
-  console.log("\nDone! Open http://localhost:3000 to view the dashboard.");
+  console.log("\nDone! Open http://localhost:3000/dashboard/ to view the dashboard.");
 }
 
 main().catch((err) => {

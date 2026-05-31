@@ -5,8 +5,8 @@
   "type": "module",
   "main": "run-reviews.js",
   "scripts": {
-    "start": "node -r dotenv/config run-reviews.js",
-    "review": "node -r dotenv/config run-reviews.js"
+    "start": "node run-reviews.js",
+    "review": "node run-reviews.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

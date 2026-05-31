@@ -11,7 +11,7 @@ A nightly Node.js script that finds GitHub PRs requesting your review, runs each
 3. It queries GitHub for open PRs where you are a requested reviewer
 4. Each PR's diff, files, and description are sent to a Claude agent in parallel
 5. Results are saved to `results/reviews.json`
-6. A persistent local server serves the dashboard at `http://localhost:3000`
+6. A persistent local server serves the dashboard at `http://localhost:3000/dashboard/`
 7. Open the dashboard to read feedback and open all PRs in new tabs
 
 ---
@@ -59,7 +59,6 @@ Edit `.env`:
 |---|---|
 | `GITHUB_TOKEN` | Personal access token. Needs `pull_requests: read` and `contents: read`. Settings → Developer settings → Fine-grained tokens. |
 | `ANTHROPIC_API_KEY` | From console.anthropic.com → API Keys |
-| `GITHUB_USERNAME` | Your GitHub username |
 | `REVIEW_SKILL_URL` | Raw GitHub URL to your review skill `.md` file, e.g. `https://raw.githubusercontent.com/you/skills-repo/main/pr-review.md` |
 
 ### 3. Test manually
@@ -86,7 +85,7 @@ Expected output:
 
 ```bash
 npx serve .
-# Open http://localhost:3000/dashboard
+# Open http://localhost:3000/dashboard/
 ```
 
 ---
@@ -111,8 +110,6 @@ Create `~/Library/LaunchAgents/com.pr-review-agent.plist`:
   <key>ProgramArguments</key>
   <array>
     <string>/usr/local/bin/node</string>
-    <string>-r</string>
-    <string>dotenv/config</string>
     <string>/ABSOLUTE/PATH/TO/pr-review-agent/run-reviews.js</string>
   </array>
 
@@ -233,7 +230,7 @@ launchctl load ~/Library/LaunchAgents/com.pr-review-dashboard.plist
 
 ## Dashboard
 
-Open **http://localhost:3000/dashboard** in any browser.
+Open **http://localhost:3000/dashboard/** in any browser.
 
 - Shows all reviewed PRs with agent feedback
 - Summary bar: total PRs, repos, lines added/removed
