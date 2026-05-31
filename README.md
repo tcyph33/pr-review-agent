@@ -40,7 +40,7 @@ pr-review-agent/
 ### 1. Clone and run setup
 
 ```bash
-git clone https://github.com/<your_gh_username>/pr-review-agent.git
+git clone https://github.com/tcyph33/pr-review-agent.git
 cd pr-review-agent
 bash setup.sh
 ```
@@ -146,7 +146,7 @@ launchctl list | grep pr-review
 ## Setting Up on a New Machine
 
 ```bash
-git clone https://github.com/<your_gh_username>/pr-review-agent.git
+git clone https://github.com/tcyph33/pr-review-agent.git
 cd pr-review-agent
 bash setup.sh
 # then set your keys in .env or your environment
