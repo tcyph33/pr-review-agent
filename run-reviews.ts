@@ -1,58 +1,18 @@
 #!/usr/bin/env npx tsx
 
 import "dotenv/config";
-import Anthropic from "@anthropic-ai/sdk";
-import { Octokit } from "@octokit/rest";
-import type { RestEndpointMethodTypes } from "@octokit/rest";
-import { execSync } from "child_process";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-type ReviewState = "PENDING" | "COMMENTED" | "CHANGES_REQUESTED" | "APPROVED";
-
-interface PRReview {
-  id: string;
-  title: string;
-  url: string;
-  repo: string;
-  pull_number: number;
-  author: string;
-  branch: string;
-  filesChanged: number;
-  additions: number;
-  deletions: number;
-  feedback: string;
-  reviewState: ReviewState;
-  prCreatedAt: string;
-  reviewedAt: string;
-}
-
-interface ParsedRepo {
-  owner: string;
-  repo: string;
-  pull_number: number;
-}
-
-type SearchPRItem =
-  RestEndpointMethodTypes["search"]["issuesAndPullRequests"]["response"]["data"]["items"][number];
-
-type PRDetails =
-  RestEndpointMethodTypes["pulls"]["get"]["response"]["data"];
-
-type PRFile =
-  RestEndpointMethodTypes["pulls"]["listFiles"]["response"]["data"][number];
+import { createOctokit, getAuthenticatedUsername, getPRsNeedingReview, getPRDiff, getPRDetails, getPRFiles, getMyReviewState, refreshPRStatuses } from "./lib/github.js";
+import type { SearchPRItem } from "./lib/github.js";
+import { createAnthropic, fetchReviewSkill, reviewPRWithClaude } from "./lib/claude.js";
+import { loadReviews, saveReviews, mergeReviews, applyStatusUpdates } from "./lib/storage.js";
+import type { PRReview } from "./lib/storage.js";
+import { notify, buildNotificationSummary } from "./lib/notify.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
 const GITHUB_TOKEN      = process.env.GITHUB_TOKEN;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const REVIEW_SKILL_URL  = process.env.REVIEW_SKILL_URL;
-const RESULTS_PATH      = path.join(__dirname, "results", "reviews.json");
 
 const missing = (
   [
@@ -77,97 +37,10 @@ const reviewSkillUrl  = REVIEW_SKILL_URL!;
 
 // ── Clients ───────────────────────────────────────────────────────────────────
 
-const octokit   = new Octokit({ auth: githubToken });
-const anthropic = new Anthropic({ apiKey: anthropicApiKey });
+const octokit   = createOctokit(githubToken);
+const anthropic = createAnthropic(anthropicApiKey);
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function notify(title: string, message: string): void {
-  try {
-    const escaped = message.replace(/'/g, "\\'");
-    const escapedTitle = title.replace(/'/g, "\\'");
-    execSync(`osascript -e 'display notification "${escaped}" with title "${escapedTitle}"'`);
-  } catch {
-    // notifications are best-effort — never crash the script over them
-  }
-}
-
-async function fetchReviewSkill(): Promise<string> {
-  console.log(`📥  Fetching review skill from ${reviewSkillUrl} ...`);
-  const res = await fetch(reviewSkillUrl, {
-    headers: {
-      Authorization: `token ${githubToken}`,
-      Accept: "application/vnd.github.raw",
-    },
-  });
-  if (!res.ok) {
-    console.error(`❌  Failed to fetch review skill: ${res.status} ${res.statusText}`);
-    process.exit(1);
-  }
-  const text = await res.text();
-  console.log(`    Loaded ${text.length} characters.`);
-  return text;
-}
-
-async function getPRsNeedingReview(): Promise<{ items: SearchPRItem[]; username: string }> {
-  const { data: user } = await octokit.rest.users.getAuthenticated();
-  const username = user.login;
-  console.log(`\n🔍  Searching for PRs requesting review from ${username}...`);
-  const { data } = await octokit.rest.search.issuesAndPullRequests({
-    q: `is:pr is:open review-requested:${username}`,
-    per_page: 50,
-  });
-  console.log(`    Found ${data.items.length} PR(s) needing review.`);
-  return { items: data.items, username };
-}
-
-async function getPRDiff(owner: string, repo: string, pull_number: number): Promise<string> {
-  const { data } = await octokit.rest.pulls.get({
-    owner, repo, pull_number,
-    mediaType: { format: "diff" },
-  });
-  return data as unknown as string;
-}
-
-async function getPRDetails(owner: string, repo: string, pull_number: number): Promise<PRDetails> {
-  const { data } = await octokit.rest.pulls.get({ owner, repo, pull_number });
-  return data;
-}
-
-async function getPRFiles(owner: string, repo: string, pull_number: number): Promise<PRFile[]> {
-  const { data } = await octokit.rest.pulls.listFiles({
-    owner, repo, pull_number,
-    per_page: 100,
-  });
-  return data;
-}
-
-async function getMyReviewState(
-  owner: string,
-  repo: string,
-  pull_number: number,
-  username: string
-): Promise<ReviewState> {
-  try {
-    const { data } = await octokit.rest.pulls.listReviews({ owner, repo, pull_number });
-    const mine = data.filter((r) => r.user?.login === username);
-    if (mine.length === 0) return "PENDING";
-    const latest = mine[mine.length - 1];
-    const state = latest.state as string;
-    if (state === "APPROVED")          return "APPROVED";
-    if (state === "CHANGES_REQUESTED") return "CHANGES_REQUESTED";
-    if (state === "COMMENTED")         return "COMMENTED";
-    return "PENDING";
-  } catch {
-    return "PENDING";
-  }
-}
-
-function parseRepoFromUrl(url: string): ParsedRepo | null {
-  const match = url.match(/repos\/([^/]+)\/([^/]+)\/pulls\/(\d+)/);
-  if (!match) return null;
-  return { owner: match[1], repo: match[2], pull_number: parseInt(match[3], 10) };
-}
+// ── Per-PR review ─────────────────────────────────────────────────────────────
 
 async function reviewPR(
   pr: SearchPRItem,
@@ -180,115 +53,52 @@ async function reviewPR(
     return null;
   }
 
-  const parsed = parseRepoFromUrl(prUrl);
-  if (!parsed) {
+  const match = prUrl.match(/repos\/([^/]+)\/([^/]+)\/pulls\/(\d+)/);
+  if (!match) {
     console.warn(`  ⚠️  Could not parse repo info for PR: ${pr.html_url}`);
     return null;
   }
 
-  const { owner, repo, pull_number } = parsed;
-  console.log(`  🤖  Reviewing PR #${pull_number} in ${owner}/${repo}: "${pr.title}"`);
+  const owner      = match[1];
+  const repo       = match[2];
+  const pullNumber = parseInt(match[3], 10);
 
-  let diff: string;
-  let files: PRFile[];
-  let details: PRDetails;
-  let reviewState: ReviewState;
+  console.log(`  🤖  Reviewing PR #${pullNumber} in ${owner}/${repo}: "${pr.title}"`);
 
   try {
-    [diff, files, details, reviewState] = await Promise.all([
-      getPRDiff(owner, repo, pull_number),
-      getPRFiles(owner, repo, pull_number),
-      getPRDetails(owner, repo, pull_number),
-      getMyReviewState(owner, repo, pull_number, username),
+    const [diff, files, details, reviewState] = await Promise.all([
+      getPRDiff(octokit, owner, repo, pullNumber),
+      getPRFiles(octokit, owner, repo, pullNumber),
+      getPRDetails(octokit, owner, repo, pullNumber),
+      getMyReviewState(octokit, owner, repo, pullNumber, username),
     ]);
+
+    const feedback = await reviewPRWithClaude(
+      anthropic, reviewSkill, pr, owner, repo, pullNumber, details, files, diff
+    );
+
+    return {
+      id:           `${owner}/${repo}#${pullNumber}`,
+      title:        pr.title ?? "",
+      url:          pr.html_url,
+      repo:         `${owner}/${repo}`,
+      pull_number:  pullNumber,
+      author:       details.user?.login ?? "unknown",
+      branch:       `${details.head.ref} → ${details.base.ref}`,
+      filesChanged: files.length,
+      additions:    files.reduce((s, f) => s + f.additions, 0),
+      deletions:    files.reduce((s, f) => s + f.deletions, 0),
+      feedback,
+      reviewState,
+      prStatus:     "open",
+      prCreatedAt:  details.created_at,
+      reviewedAt:   new Date().toISOString(),
+    };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`  ❌  Failed to fetch PR data for #${pull_number}: ${message}`);
+    console.error(`  ❌  Failed to review PR #${pullNumber}: ${message}`);
     return null;
   }
-
-  const fileList = files
-    .map((f) => `- ${f.filename} (+${f.additions} -${f.deletions})`)
-    .join("\n");
-
-  const userMessage = `
-## Pull Request: ${pr.title}
-**Repo:** ${owner}/${repo}
-**PR #${pull_number}**
-**Author:** ${details.user?.login ?? "unknown"}
-**Branch:** \`${details.head.ref}\` → \`${details.base.ref}\`
-**Description:**
-${details.body ?? "_No description provided._"}
-
-## Files Changed
-${fileList}
-
-## Diff
-\`\`\`diff
-${diff.slice(0, 20000)}
-\`\`\`
-`.trim();
-
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-20250514",
-    max_tokens: 2048,
-    system: reviewSkill,
-    messages: [{ role: "user", content: userMessage }],
-  });
-
-  const feedback = response.content
-    .filter((b) => b.type === "text")
-    .map((b) => (b as { type: "text"; text: string }).text)
-    .join("\n");
-
-  return {
-    id: `${owner}/${repo}#${pull_number}`,
-    title: pr.title ?? "",
-    url: pr.html_url,
-    repo: `${owner}/${repo}`,
-    pull_number,
-    author: details.user?.login ?? "unknown",
-    branch: `${details.head.ref} → ${details.base.ref}`,
-    filesChanged: files.length,
-    additions: files.reduce((s, f) => s + f.additions, 0),
-    deletions: files.reduce((s, f) => s + f.deletions, 0),
-    feedback,
-    reviewState,
-    prCreatedAt: details.created_at,
-    reviewedAt: new Date().toISOString(),
-  };
-}
-
-function saveResults(incoming: PRReview[]): { newCount: number; updatedCount: number } {
-  const dir = path.dirname(RESULTS_PATH);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-
-  let existing: Record<string, PRReview> = {};
-  if (fs.existsSync(RESULTS_PATH)) {
-    try {
-      const raw: PRReview[] = JSON.parse(fs.readFileSync(RESULTS_PATH, "utf8"));
-      existing = Object.fromEntries(raw.map((r) => [r.id, r]));
-    } catch {
-      // corrupt file — start fresh
-    }
-  }
-
-  const existingIds = new Set(Object.keys(existing));
-  const newCount     = incoming.filter((r) => !existingIds.has(r.id)).length;
-  const updatedCount = incoming.filter((r) => existingIds.has(r.id)).length;
-
-  for (const review of incoming) {
-    existing[review.id] = review;
-  }
-
-  const sorted = Object.values(existing).sort(
-    (a, b) => new Date(b.reviewedAt).getTime() - new Date(a.reviewedAt).getTime()
-  );
-
-  fs.writeFileSync(RESULTS_PATH, JSON.stringify(sorted, null, 2));
-  console.log(`\n💾  Results saved to ${RESULTS_PATH}`);
-
-  return { newCount, updatedCount };
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -296,30 +106,53 @@ function saveResults(incoming: PRReview[]): { newCount: number; updatedCount: nu
 async function main(): Promise<void> {
   console.log("🚀  PR Review Agent starting...\n");
 
-  const reviewSkill = await fetchReviewSkill();
-  const { items: prs, username } = await getPRsNeedingReview();
+  const reviewSkill = await fetchReviewSkill(reviewSkillUrl, githubToken);
+  const username    = await getAuthenticatedUsername(octokit);
+
+  // ── Step 1: refresh status of all existing reviews ──────────────────────────
+  const existing = loadReviews();
+  if (existing.length > 0) {
+    console.log(`\n🔄  Refreshing status of ${existing.length} existing review(s)...`);
+    const statusMap = await refreshPRStatuses(octokit, existing);
+    const refreshed = applyStatusUpdates(existing, statusMap);
+    const mergedClosed = refreshed.filter(r => r.prStatus !== "open").length;
+    if (mergedClosed > 0) {
+      console.log(`    ${mergedClosed} PR(s) are now merged or closed.`);
+    }
+    saveReviews(refreshed);
+  }
+
+  // ── Step 2: find and review new/updated PRs ──────────────────────────────────
+  console.log(`\n🔍  Searching for PRs requesting review from ${username}...`);
+  const prs = await getPRsNeedingReview(octokit, username);
+  console.log(`    Found ${prs.length} PR(s) needing review.`);
 
   if (prs.length === 0) {
-    console.log("\n✅  No PRs needing review. All clear!");
+    console.log("\n✅  No new PRs to review.");
+    console.log("Done! Open http://localhost:3000/dashboard/ to view the dashboard.");
     process.exit(0);
   }
 
   console.log(`\n📋  Reviewing ${prs.length} PR(s) in parallel...\n`);
 
-  const results = await Promise.all(prs.map((pr) => reviewPR(pr, reviewSkill, username)));
+  const results    = await Promise.all(prs.map((pr) => reviewPR(pr, reviewSkill, username)));
   const successful = results.filter((r): r is PRReview => r !== null);
 
   console.log(`\n✅  Completed ${successful.length}/${prs.length} reviews.`);
 
-  const { newCount, updatedCount } = saveResults(successful);
+  // ── Step 3: merge and save ───────────────────────────────────────────────────
+  const currentReviews = loadReviews();
+  const { merged, newCount, updatedCount } = mergeReviews(currentReviews, successful);
+  saveReviews(merged);
+  console.log(`💾  Results saved.`);
 
-  const parts: string[] = [];
-  if (newCount > 0)     parts.push(`${newCount} new`);
-  if (updatedCount > 0) parts.push(`${updatedCount} updated`);
-  const summary = parts.length > 0 ? parts.join(", ") : `${successful.length} reviews ready`;
+  // ── Step 4: notify ───────────────────────────────────────────────────────────
+  const summary = buildNotificationSummary(newCount, updatedCount);
+  if (summary) {
+    notify("PR Review Agent", summary);
+    console.log(`🔔  Notification sent: ${summary}`);
+  }
 
-  notify("PR Review Agent", summary);
-  console.log(`🔔  Notification sent: ${summary}`);
   console.log("\nDone! Open http://localhost:3000/dashboard/ to view the dashboard.");
 }
 

@@ -25,7 +25,12 @@ pr-review-agent/
 ├── .gitignore
 ├── package.json
 ├── tsconfig.json
-├── run-reviews.ts        # the nightly agent script
+├── run-reviews.ts        # main orchestration
+├── lib/
+│   ├── github.ts         # all GitHub API calls
+│   ├── claude.ts         # Anthropic API calls
+│   ├── storage.ts        # read/write reviews.json
+│   └── notify.ts         # macOS notifications
 ├── setup-macos.sh              # one-time setup script
 ├── dashboard/
 │   └── index.html        # self-hosted review dashboard
