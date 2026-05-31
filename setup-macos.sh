@@ -71,10 +71,8 @@ cat > ~/Library/LaunchAgents/com.pr-review-dashboard.plist << PLIST
   <key>ProgramArguments</key>
   <array>
     <string>$NPX_PATH</string>
-    <string>serve</string>
-    <string>.</string>
-    <string>--listen</string>
-    <string>3000</string>
+    <string>tsx</string>
+    <string>$REPO_PATH/server.ts</string>
   </array>
   <key>WorkingDirectory</key>
   <string>$REPO_PATH</string>
