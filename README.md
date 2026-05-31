@@ -1,18 +1,19 @@
 # PR Review Agent
 
-A nightly TypeScript script that finds GitHub PRs requesting your review, runs each one through a Claude agent using your review skill (pulled live from a separate repo), and saves feedback locally. A self-hosted HTML dashboard lets you read all feedback and open every PR in a new tab.
+A TypeScript script that runs twice daily to find GitHub PRs requesting your review, runs each one through a Claude agent using your review skill (pulled live from a separate repo), tracks PR status (open, merged, closed), and saves structured feedback locally. A self-hosted HTML dashboard lets you read feedback, see review state, and open PRs in new tabs.
 
 ---
 
 ## How It Works
 
-1. **launchd** triggers `run-reviews.ts` on a nightly schedule via `tsx`
-2. The script fetches your review skill `.md` live from your skills repo
-3. It resolves your GitHub username automatically from your token
-4. Each PR's diff, files, and description are sent to a Claude agent in parallel
-5. Results are saved to `results/reviews.json`
-6. `server.ts` serves the dashboard and handles dismiss/clear API calls at `http://localhost:3000/dashboard/`
-7. Open the dashboard to read feedback and open all PRs in new tabs
+1. **launchd** triggers `run-reviews.ts` at 2am and 2pm via `tsx`
+2. The script refreshes the status of all existing reviews (open, merged, closed)
+3. It fetches your review skill `.md` live from your skills repo
+4. It resolves your GitHub username automatically from your token
+5. Each PR's diff, files, and description are sent to a Claude agent in parallel
+6. Results are saved to `results/reviews.json`
+7. A macOS notification fires with a new/updated count (skipped on other platforms)
+8. `server.ts` serves the dashboard at `http://localhost:3000/dashboard/`
 
 ---
 
@@ -27,11 +28,11 @@ pr-review-agent/
 ├── tsconfig.json
 ├── run-reviews.ts        # main orchestration
 ├── lib/
-│   ├── github.ts         # all GitHub API calls
+│   ├── github.ts         # all GitHub API calls and GitHub-related types
 │   ├── claude.ts         # Anthropic API calls
-│   ├── storage.ts        # read/write reviews.json
-│   └── notify.ts         # macOS notifications
-├── setup-macos.sh              # one-time setup script
+│   ├── storage.ts        # read/write reviews.json and PRReview type
+│   └── notify.ts         # notifications (macOS only, skipped elsewhere)
+├── setup-macos.sh        # one-time setup script
 ├── dashboard/
 │   └── index.html        # self-hosted review dashboard
 ├── logs/                 # launchd output (not committed)
@@ -95,13 +96,16 @@ Expected output:
 🚀  PR Review Agent starting...
 📥  Fetching review skill from https://raw.githubusercontent.com/...
     Loaded 1842 characters.
+🔄  Refreshing status of 2 existing review(s)...
+    1 PR(s) are now merged or closed.
 🔍  Searching for PRs requesting review from tcyph33...
     Found 3 PR(s) needing review.
 📋  Reviewing 3 PR(s) in parallel...
   🤖  Reviewing PR #42 in org/repo: "Add login flow"
   🤖  Reviewing PR #17 in org/repo2: "Fix null pointer"
 ✅  Completed 3/3 reviews.
-💾  Results saved to results/reviews.json
+💾  Results saved.
+🔔  Notification sent: 2 new, 1 updated
 Done! Open http://localhost:3000/dashboard/ to view the dashboard.
 ```
 
@@ -112,19 +116,23 @@ Done! Open http://localhost:3000/dashboard/ to view the dashboard.
 Open **http://localhost:3000/dashboard/** in any browser.
 
 - Shows all reviewed PRs with agent feedback
-- Summary bar: total PRs, repos, lines added/removed
+- Summary bar: total PRs pending, repos, oldest PR age, average PR age
+- Review state badge per card: Pending, Commented, Changes Requested, Approved
+- PR status badge per card: Merged or Closed (open PRs shown first, merged/closed dimmed below)
 - **Expand/Collapse** each feedback block
 - **Open PR** opens that single PR in a new tab
-- **Open All PRs in Tabs** opens every PR at once
+- **Open All** opens every PR at once
+- **Dismiss** removes a single review from the dashboard
+- **Clear All** wipes all reviews after confirmation
 - Auto-refreshes every 60 seconds
 
-The dashboard server (`server.ts`) starts automatically at login via launchd and restarts itself if it ever crashes. It serves the dashboard and handles the delete API calls that power the dismiss and clear all buttons.
+The dashboard server (`server.ts`) starts automatically at login via launchd and restarts itself if it ever crashes.
 
 ---
 
 ## Scheduling (macOS only)
 
-The review script runs at 2:00 AM and 2:00 PM daily via launchd (configured by `setup-macos.sh`). After each run, a macOS notification fires showing how many reviews are new and how many were updated.
+The review script runs at 2:00 AM and 2:00 PM daily via launchd (configured by `setup-macos.sh`). On macOS, a notification fires after each run showing how many reviews are new and how many were updated. On other platforms the notification is skipped silently.
 
 > **Note:** launchd skips runs while the laptop is asleep and does not catch up on missed runs.
 > If your laptop is usually closed at 2am, change the hour in the plist to a time it's reliably awake,
@@ -163,7 +171,7 @@ bash setup-macos.sh
 
 ## Platform Notes
 
-**This repo is macOS only** for the scheduling and background server setup. The `setup-macos.sh` script, launchd plists, and `launchctl` commands are all macOS-specific.
+**Scheduling and the dashboard server are macOS only.** The `setup-macos.sh` script, launchd plists, and `launchctl` commands are all macOS-specific.
 
 The `run-reviews.ts` script itself is fully cross-platform. If you want to run this on another OS, only the scheduling layer needs to change:
 - **Linux** — use `cron`
@@ -171,14 +179,14 @@ The `run-reviews.ts` script itself is fully cross-platform. If you want to run t
 
 ### Running with the Laptop Lid Closed
 
-By default, macOS puts the machine to sleep when the lid is closed, which causes launchd to skip scheduled runs. To allow the script to run overnight with the lid closed:
+By default, macOS puts the machine to sleep when the lid is closed, which causes launchd to skip scheduled runs. To allow the script to run with the lid closed:
 
 1. Open **System Settings → Energy**
 2. Enable **"Wake for network access"**
 
 With that setting on, the machine stays reachable and launchd will fire the scheduled job at the configured time even with the lid closed.
 
-If you'd rather not change that setting, simply adjust the run time in the plist to a time you know the laptop is open and awake — like 8am or 9am.
+If you'd rather not change that setting, adjust the run time in the plist to a time the laptop is reliably awake.
 
 To change the schedule after setup:
 ```bash

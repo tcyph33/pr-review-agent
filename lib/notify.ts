@@ -1,6 +1,8 @@
 import { execSync } from "child_process";
+import os from "os";
 
 export function notify(title: string, message: string): void {
+  if (os.platform() !== "darwin") return; // notifications only supported on macOS
   try {
     const escaped      = message.replace(/'/g, "\\'");
     const escapedTitle = title.replace(/'/g, "\\'");
