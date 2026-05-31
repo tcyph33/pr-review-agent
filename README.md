@@ -26,7 +26,7 @@ pr-review-agent/
 ├── package.json
 ├── tsconfig.json
 ├── run-reviews.ts        # the nightly agent script
-├── setup.sh              # one-time setup script
+├── setup-macos.sh              # one-time setup script
 ├── dashboard/
 │   └── index.html        # self-hosted review dashboard
 ├── logs/                 # launchd output (not committed)
@@ -43,10 +43,10 @@ pr-review-agent/
 ```bash
 git clone https://github.com/tcyph33/pr-review-agent.git
 cd pr-review-agent
-bash setup.sh
+bash setup-macos.sh
 ```
 
-`setup.sh` handles everything automatically:
+`setup-macos.sh` handles everything automatically:
 - Installs npm dependencies (including `tsx` and TypeScript)
 - Creates `logs/` and `results/` directories
 - Copies `.env.example` to `.env` (if `.env` doesn't already exist)
@@ -57,7 +57,7 @@ bash setup.sh
 
 The script reads credentials from `process.env`. You have two options — pick either or both:
 
-**Option A — `.env` file** (created by setup.sh):
+**Option A — `.env` file** (created by setup-macos.sh):
 ```
 GITHUB_TOKEN=ghp_yourTokenHere
 ANTHROPIC_API_KEY=sk-ant-yourKeyHere
@@ -117,9 +117,9 @@ The dashboard server starts automatically at login via launchd and restarts itse
 
 ---
 
-## Scheduling
+## Scheduling (macOS only)
 
-The nightly review script runs at 2:00 AM via launchd (configured by `setup.sh`).
+The nightly review script runs at 2:00 AM via launchd (configured by `setup-macos.sh`).
 
 > **Note:** launchd skips runs while the laptop is asleep and does not catch up on missed runs.
 > If your laptop is usually closed at 2am, change the hour in the plist to a time it's reliably awake,
@@ -150,6 +150,37 @@ launchctl list | grep pr-review
 ```bash
 git clone https://github.com/tcyph33/pr-review-agent.git
 cd pr-review-agent
-bash setup.sh
+bash setup-macos.sh
 # then set your keys in .env or your environment
+```
+
+---
+
+## Platform Notes
+
+**This repo is macOS only** for the scheduling and background server setup. The `setup-macos.sh` script, launchd plists, and `launchctl` commands are all macOS-specific.
+
+The `run-reviews.ts` script itself is fully cross-platform. If you want to run this on another OS, only the scheduling layer needs to change:
+- **Linux** — use `cron`
+- **Windows** — use Task Scheduler
+
+### Running with the Laptop Lid Closed
+
+By default, macOS puts the machine to sleep when the lid is closed, which causes launchd to skip scheduled runs. To allow the script to run overnight with the lid closed:
+
+1. Open **System Settings → Energy**
+2. Enable **"Wake for network access"**
+
+With that setting on, the machine stays reachable and launchd will fire the scheduled job at the configured time even with the lid closed.
+
+If you'd rather not change that setting, simply adjust the run time in the plist to a time you know the laptop is open and awake — like 8am or 9am.
+
+To change the schedule after setup:
+```bash
+# Edit the hour value in the plist
+open ~/Library/LaunchAgents/com.pr-review-agent.plist
+
+# Then reload it
+launchctl unload ~/Library/LaunchAgents/com.pr-review-agent.plist
+launchctl load ~/Library/LaunchAgents/com.pr-review-agent.plist
 ```
