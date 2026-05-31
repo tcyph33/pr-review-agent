@@ -24,6 +24,7 @@ interface PRReview {
   additions: number;
   deletions: number;
   feedback: string;
+  prCreatedAt: string;
   reviewedAt: string;
 }
 
@@ -216,6 +217,7 @@ ${diff.slice(0, 20000)}
     additions: files.reduce((s, f) => s + f.additions, 0),
     deletions: files.reduce((s, f) => s + f.deletions, 0),
     feedback,
+    prCreatedAt: details.created_at,
     reviewedAt: new Date().toISOString(),
   };
 }

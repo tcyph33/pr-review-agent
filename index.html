@@ -182,7 +182,7 @@
   <div class="actions">
     <button class="btn-ghost" onclick="loadReviews()">↺ Refresh</button>
     <button class="btn-danger" id="btn-clear-all" onclick="confirmClearAll()" style="display:none">Clear All</button>
-    <button class="btn-primary" id="btn-open-all" onclick="openAll()" style="display:none">Open All PRs in Tabs</button>
+    <button class="btn-primary" id="btn-open-all" onclick="openAll()" style="display:none">Open All</button>
   </div>
 </header>
 
@@ -212,14 +212,24 @@
     return `${Math.floor(hrs / 24)}d ago`;
   }
 
+  function prAgeDays(r) {
+    const created = r.prCreatedAt ? new Date(r.prCreatedAt) : new Date(r.reviewedAt);
+    return Math.floor((Date.now() - created.getTime()) / 86400000);
+  }
+
   function renderSummary() {
     const bar = document.getElementById("summary-bar");
     const repos = new Set(reviews.map(r => r.repo)).size;
+    const ages = reviews.map(r => prAgeDays(r));
+    const oldest = ages.length ? Math.max(...ages) : 0;
+    const avg = ages.length ? Math.round(ages.reduce((s,a) => s + a, 0) / ages.length) : 0;
+    const oldestLabel = oldest === 1 ? '1 day' : oldest + ' days';
+    const avgLabel = avg === 1 ? '1 day' : avg + ' days';
     bar.innerHTML = `
-      <div class="stat"><div class="stat-value">${reviews.length}</div><div class="stat-label">PRs Reviewed</div></div>
+      <div class="stat"><div class="stat-value">${reviews.length}</div><div class="stat-label">PRs Pending</div></div>
       <div class="stat"><div class="stat-value">${repos}</div><div class="stat-label">Repos</div></div>
-      <div class="stat"><div class="stat-value">${reviews.reduce((s,r) => s + r.additions, 0)}</div><div class="stat-label">Lines Added</div></div>
-      <div class="stat"><div class="stat-value">${reviews.reduce((s,r) => s + r.deletions, 0)}</div><div class="stat-label">Lines Removed</div></div>
+      <div class="stat"><div class="stat-value">${oldestLabel}</div><div class="stat-label">Oldest PR</div></div>
+      <div class="stat"><div class="stat-value">${avgLabel}</div><div class="stat-label">Avg PR Age</div></div>
     `;
   }
 
