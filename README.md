@@ -251,21 +251,18 @@ launchctl load ~/Library/LaunchAgents/com.pr-review-agent.plist
 
 ### A PR review failed overnight
 
-The script catches Claude Code errors per PR and continues — one failure won't stop other reviews. Check the logs:
+The script catches Claude Code errors per PR and continues — one failure won't stop other reviews. Failed PRs appear on the dashboard as red-bordered cards with a "⚠ Review Failed" badge and a **View Log** button. Click View Log to see the full Claude Code output for that PR directly in the dashboard.
+
+The orchestrator log also records which PRs failed:
 
 ```bash
 tail -f logs/out.log
 tail -f logs/err.log
 ```
 
-A failed review looks like:
-```
-  🤖  Reviewing PR #42 in org/repo: "Add login flow"
-  ❌  Failed to review PR #42: Claude Code failed: Command failed: claude --print ...
-✅  Completed 1/2 reviews.
-```
+Per-PR logs live at `logs/reviews/<owner>-<repo>-<number>.log` and are automatically deleted when you dismiss the card from the dashboard.
 
-The PR card on the dashboard will have no new feedback. Re-run manually to retry:
+Re-run manually to retry a failed review:
 
 ```bash
 npm run review

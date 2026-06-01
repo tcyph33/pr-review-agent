@@ -15,7 +15,15 @@ import {
   refreshPRStatuses,
 } from "./lib/github.js";
 import type { SearchPRItem } from "./lib/github.js";
-import { loadReviews, saveReviews, mergeReviews, applyStatusUpdates } from "./lib/storage.js";
+import {
+  loadReviews,
+  saveReviews,
+  mergeReviews,
+  applyStatusUpdates,
+  writeReviewLog,
+  rotateLogIfNeeded,
+  RESULTS_PATH,
+} from "./lib/storage.js";
 import type { PRReview } from "./lib/storage.js";
 import { notify, buildNotificationSummary } from "./lib/notify.js";
 
@@ -43,6 +51,12 @@ if (missing.length > 0) {
 const githubToken    = GITHUB_TOKEN!;
 const reviewSkillUrl = REVIEW_SKILL_URL!;
 
+// ── Paths ─────────────────────────────────────────────────────────────────────
+
+const __dirname  = path.dirname(new URL(import.meta.url).pathname);
+const LOGS_OUT   = path.join(__dirname, "logs", "out.log");
+const LOGS_ERR   = path.join(__dirname, "logs", "err.log");
+
 // ── Clients ───────────────────────────────────────────────────────────────────
 
 const octokit = createOctokit(githubToken);
@@ -68,24 +82,31 @@ async function fetchSkill(): Promise<string> {
 
 // ── Claude Code runner ────────────────────────────────────────────────────────
 
-function runWithClaudeCode(skill: string, prUrl: string): string {
+function runWithClaudeCode(skill: string, prUrl: string, logPath: string): string {
   const skillPath = path.join(os.tmpdir(), "pr-review-skill.md");
   fs.writeFileSync(skillPath, skill, "utf8");
 
   const message = `/code-review ${prUrl}`;
+  const header  = `=== PR Review: ${prUrl}\n=== Started: ${new Date().toISOString()}\n\n`;
+
+  fs.mkdirSync(path.dirname(logPath), { recursive: true });
+  fs.writeFileSync(logPath, header, "utf8");
 
   try {
     const output = execSync(
       `claude --print --system-prompt "$(cat '${skillPath}')" "${message}"`,
       {
         encoding: "utf8",
-        timeout: 30 * 60 * 1000, // 30 minute timeout per PR
+        timeout: 30 * 60 * 1000,    // 30 minute timeout per PR
         maxBuffer: 10 * 1024 * 1024, // 10MB output buffer
       }
     );
-    return output.trim();
+    const result = output.trim();
+    fs.appendFileSync(logPath, result + `\n\n=== Completed: ${new Date().toISOString()}\n`);
+    return result;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    fs.appendFileSync(logPath, `\n=== FAILED: ${new Date().toISOString()}\n${message}\n`);
     throw new Error(`Claude Code failed: ${message}`);
   }
 }
@@ -96,22 +117,41 @@ async function reviewPR(
   pr: SearchPRItem,
   skill: string,
   username: string
-): Promise<PRReview | null> {
+): Promise<PRReview> {
   const prUrl = pr.pull_request?.url;
-  if (!prUrl) {
-    console.warn(`  ⚠️  No pull_request URL for: ${pr.html_url}`);
-    return null;
-  }
+  const match = prUrl?.match(/repos\/([^/]+)\/([^/]+)\/pulls\/(\d+)/);
 
-  const match = prUrl.match(/repos\/([^/]+)\/([^/]+)\/pulls\/(\d+)/);
-  if (!match) {
-    console.warn(`  ⚠️  Could not parse repo info for PR: ${pr.html_url}`);
-    return null;
+  // Build a minimal failed card if we can't even parse the PR
+  if (!prUrl || !match) {
+    const id = `unknown#${pr.number}`;
+    const logFile = writeReviewLog(id, `Could not parse PR URL: ${prUrl ?? "undefined"}\n`);
+    console.warn(`  ⚠️  Could not parse PR info: ${pr.html_url}`);
+    return {
+      id,
+      title:        pr.title ?? "Unknown PR",
+      url:          pr.html_url,
+      repo:         "unknown",
+      pull_number:  pr.number,
+      author:       "unknown",
+      branch:       "",
+      filesChanged: 0,
+      additions:    0,
+      deletions:    0,
+      feedback:     "",
+      reviewState:  "PENDING",
+      reviewStatus: "failed",
+      prStatus:     "open",
+      prCreatedAt:  new Date().toISOString(),
+      reviewedAt:   new Date().toISOString(),
+      logFile,
+    };
   }
 
   const owner      = match[1];
   const repo       = match[2];
   const pullNumber = parseInt(match[3], 10);
+  const id         = `${owner}/${repo}#${pullNumber}`;
+  const logPath    = path.join(__dirname, "logs", "reviews", `${owner}-${repo}-${pullNumber}.log`);
 
   console.log(`  🤖  Reviewing PR #${pullNumber} in ${owner}/${repo}: "${pr.title}"`);
 
@@ -122,10 +162,13 @@ async function reviewPR(
       getMyReviewState(octokit, owner, repo, pullNumber, username),
     ]);
 
-    const feedback = runWithClaudeCode(skill, pr.html_url);
+    const feedback = runWithClaudeCode(skill, pr.html_url, logPath);
+    const logFile  = path.relative(__dirname, logPath);
+
+    console.log(`  ✅  PR #${pullNumber} review complete.`);
 
     return {
-      id:           `${owner}/${repo}#${pullNumber}`,
+      id,
       title:        pr.title ?? "",
       url:          pr.html_url,
       repo:         `${owner}/${repo}`,
@@ -137,14 +180,53 @@ async function reviewPR(
       deletions:    files.reduce((s, f) => s + f.deletions, 0),
       feedback,
       reviewState,
+      reviewStatus: "success",
       prStatus:     "open",
       prCreatedAt:  details.created_at,
       reviewedAt:   new Date().toISOString(),
+      logFile,
     };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message  = err instanceof Error ? err.message : String(err);
+    const logFile  = path.relative(__dirname, logPath);
     console.error(`  ❌  Failed to review PR #${pullNumber}: ${message}`);
-    return null;
+
+    // Fetch what metadata we can for the failed card
+    let author = "unknown", branch = "", filesChanged = 0, additions = 0, deletions = 0, prCreatedAt = new Date().toISOString();
+    try {
+      const [files, details] = await Promise.all([
+        getPRFiles(octokit, owner, repo, pullNumber),
+        getPRDetails(octokit, owner, repo, pullNumber),
+      ]);
+      author       = details.user?.login ?? "unknown";
+      branch       = `${details.head.ref} → ${details.base.ref}`;
+      filesChanged = files.length;
+      additions    = files.reduce((s, f) => s + f.additions, 0);
+      deletions    = files.reduce((s, f) => s + f.deletions, 0);
+      prCreatedAt  = details.created_at;
+    } catch {
+      // best effort — leave defaults if metadata fetch also fails
+    }
+
+    return {
+      id,
+      title:        pr.title ?? "",
+      url:          pr.html_url,
+      repo:         `${owner}/${repo}`,
+      pull_number:  pullNumber,
+      author,
+      branch,
+      filesChanged,
+      additions,
+      deletions,
+      feedback:     "",
+      reviewState:  "PENDING",
+      reviewStatus: "failed",
+      prStatus:     "open",
+      prCreatedAt,
+      reviewedAt:   new Date().toISOString(),
+      logFile,
+    };
   }
 }
 
@@ -152,6 +234,10 @@ async function reviewPR(
 
 async function main(): Promise<void> {
   console.log("🚀  PR Review Agent starting...\n");
+
+  // Rotate orchestrator logs if they've grown large
+  rotateLogIfNeeded(LOGS_OUT);
+  rotateLogIfNeeded(LOGS_ERR);
 
   const skill    = await fetchSkill();
   const username = await getAuthenticatedUsername(octokit);
@@ -180,19 +266,20 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // ── Step 3: review each PR via Claude Code ───────────────────────────────────
-  // Each Claude Code invocation clones to a unique directory (~/PR-Reviews/<repo>-<number>)
-  // so parallel runs are safe — no shared state or filesystem conflicts.
+  // ── Step 3: review each PR in parallel via Claude Code ───────────────────────
+  // Each invocation clones to ~/PR-Reviews/<repo>-<number> — unique per PR,
+  // so parallel runs are safe with no shared state or filesystem conflicts.
   console.log(`\n📋  Reviewing ${prs.length} PR(s) in parallel via Claude Code...\n`);
 
-  const results    = await Promise.all(prs.map((pr) => reviewPR(pr, skill, username)));
-  const successful = results.filter((r): r is PRReview => r !== null);
+  const results = await Promise.all(prs.map((pr) => reviewPR(pr, skill, username)));
+  const succeeded = results.filter(r => r.reviewStatus === "success").length;
+  const failed    = results.filter(r => r.reviewStatus === "failed").length;
 
-  console.log(`\n✅  Completed ${successful.length}/${prs.length} reviews.`);
+  console.log(`\n✅  Completed: ${succeeded} succeeded, ${failed} failed.`);
 
-  // ── Step 4: merge and save ───────────────────────────────────────────────────
+  // ── Step 4: merge and save (including failed cards) ──────────────────────────
   const currentReviews = loadReviews();
-  const { merged, newCount, updatedCount } = mergeReviews(currentReviews, successful);
+  const { merged, newCount, updatedCount } = mergeReviews(currentReviews, results);
   saveReviews(merged);
   console.log(`💾  Results saved.`);
 
