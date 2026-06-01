@@ -112,9 +112,12 @@ export function loadReviews(): PRReview[] {
 }
 
 export function saveReviews(reviews: PRReview[]): void {
-  const dir = path.dirname(RESULTS_PATH);
+  const dir  = path.dirname(RESULTS_PATH);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(RESULTS_PATH, JSON.stringify(reviews, null, 2));
+  // Atomic write — write to temp file then rename to prevent corruption on kill/crash
+  const tmp  = RESULTS_PATH + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(reviews, null, 2));
+  fs.renameSync(tmp, RESULTS_PATH);
 }
 
 export function mergeReviews(

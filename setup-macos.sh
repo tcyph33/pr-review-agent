@@ -7,7 +7,7 @@ echo "🚀  Setting up PR Review Agent..."
 
 echo "📦  Installing dependencies..."
 npm install
-mkdir -p logs results
+mkdir -p logs results logs/orchestration logs/reviews
 
 # ── .env ──────────────────────────────────────────────────────────────────────
 
@@ -18,6 +18,44 @@ if [ ! -f .env ]; then
   echo "    Either works — the script checks both."
 else
   echo "📝  .env already exists, skipping."
+fi
+
+# ── Resolve binary paths ──────────────────────────────────────────────────────
+# launchd runs with a minimal PATH — we resolve full paths now so the plist
+# has absolute paths that work regardless of shell environment.
+
+echo "🔎  Resolving binary paths..."
+
+REPO_PATH=$(pwd)
+NPX_PATH=$(which npx)
+TSX_PATH=$(which tsx 2>/dev/null || echo "$REPO_PATH/node_modules/.bin/tsx")
+CLAUDE_PATH=$(which claude 2>/dev/null || echo "")
+GH_PATH=$(which gh 2>/dev/null || echo "")
+NODE_PATH=$(which node)
+
+# Derive PATH that includes all needed binaries for the plist EnvironmentVariables
+BIN_DIRS=$(echo "$NPX_PATH:$NODE_PATH:$CLAUDE_PATH:$GH_PATH" \
+  | tr ':' '\n' | xargs -I{} dirname {} | sort -u | tr '\n' ':' | sed 's/:$//')
+LAUNCHD_PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$BIN_DIRS"
+
+echo "    npx:    $NPX_PATH"
+echo "    tsx:    $TSX_PATH"
+echo "    claude: ${CLAUDE_PATH:-not found — install with: npm install -g @anthropic-ai/claude-code}"
+echo "    gh:     ${GH_PATH:-not found — install with: brew install gh}"
+echo "    node:   $NODE_PATH"
+
+if [ -z "$CLAUDE_PATH" ]; then
+  echo ""
+  echo "⚠️   claude CLI not found. Install it before running reviews:"
+  echo "    npm install -g @anthropic-ai/claude-code"
+  echo ""
+fi
+
+if [ -z "$GH_PATH" ]; then
+  echo ""
+  echo "⚠️   gh CLI not found. Install it before running reviews:"
+  echo "    brew install gh && gh auth login"
+  echo ""
 fi
 
 # ── Claude Code permissions ───────────────────────────────────────────────────
@@ -31,7 +69,6 @@ mkdir -p "$CLAUDE_SETTINGS_DIR"
 
 if [ -f "$CLAUDE_SETTINGS_FILE" ]; then
   echo "    ~/.claude/settings.json already exists — merging allowedTools..."
-  # Use node to safely merge allowedTools into existing settings
   node -e "
     const fs = require('fs');
     const path = '$CLAUDE_SETTINGS_FILE';
@@ -70,9 +107,6 @@ fi
 
 # ── launchd ───────────────────────────────────────────────────────────────────
 
-REPO_PATH=$(pwd)
-NPX_PATH=$(which npx)
-
 echo "⚙️   Writing launchd plists..."
 
 cat > ~/Library/LaunchAgents/com.pr-review-agent.plist << PLIST
@@ -89,6 +123,11 @@ cat > ~/Library/LaunchAgents/com.pr-review-agent.plist << PLIST
     <string>tsx</string>
     <string>$REPO_PATH/run-reviews.ts</string>
   </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>$LAUNCHD_PATH</string>
+  </dict>
   <key>WorkingDirectory</key>
   <string>$REPO_PATH</string>
   <key>StartCalendarInterval</key>
@@ -128,6 +167,11 @@ cat > ~/Library/LaunchAgents/com.pr-review-dashboard.plist << PLIST
     <string>tsx</string>
     <string>$REPO_PATH/server.ts</string>
   </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>$LAUNCHD_PATH</string>
+  </dict>
   <key>WorkingDirectory</key>
   <string>$REPO_PATH</string>
   <key>RunAtLoad</key>
@@ -153,9 +197,16 @@ echo "✅  Setup complete."
 echo ""
 echo "   Next steps:"
 echo "   1. Set your keys in .env, or export them as environment variables"
-echo "   2. Ensure GitHub CLI is installed and authenticated: gh auth login"
+if [ -z "$CLAUDE_PATH" ]; then
+echo "   2. Install Claude Code: npm install -g @anthropic-ai/claude-code"
+echo "   3. Authenticate GitHub CLI: gh auth login"
+echo "   4. Test manually: npm run review"
+echo "   5. Dashboard: http://localhost:3000/dashboard/"
+else
+echo "   2. Authenticate GitHub CLI: gh auth login"
 echo "   3. Test manually: npm run review"
 echo "   4. Dashboard: http://localhost:3000/dashboard/"
+fi
 echo ""
 echo "   The review script will run at 2am and 2pm daily."
 echo "   The dashboard server is running now in the background."

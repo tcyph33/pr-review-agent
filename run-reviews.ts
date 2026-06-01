@@ -1,7 +1,7 @@
 #!/usr/bin/env npx tsx
 
 import "dotenv/config";
-import { execSync } from "child_process";
+import { execSync, execFileSync } from "child_process";
 import os from "os";
 import fs from "fs";
 import path from "path";
@@ -25,7 +25,7 @@ import {
   PR_LOGS_PATH,
 } from "./lib/storage.js";
 import type { PRReview } from "./lib/storage.js";
-import { notify, buildNotificationSummary } from "./lib/notify.js";
+import { notify, notifyFailure, buildNotificationSummary } from "./lib/notify.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -55,19 +55,74 @@ const reviewSkillUrl = REVIEW_SKILL_URL!;
 
 const octokit = createOctokit(githubToken);
 
-// ── Skill fetcher ─────────────────────────────────────────────────────────────
+// ── Pre-flight checks ─────────────────────────────────────────────────────────
 
-async function fetchSkill(): Promise<string> {
-  const res = await fetch(reviewSkillUrl, {
-    headers: {
-      Authorization: `token ${githubToken}`,
-      Accept: "application/vnd.github.raw",
-    },
-  });
-  if (!res.ok) {
-    throw new Error(`Failed to fetch skill: ${res.status} ${res.statusText}`);
+function preflight(tee: (msg: string) => void): void {
+  tee("\n🔍  Running pre-flight checks...");
+
+  // Check claude CLI is available
+  try {
+    execFileSync("which", ["claude"], { stdio: "pipe" });
+    tee("    ✅  claude CLI found.");
+  } catch {
+    throw new Error(
+      "claude CLI not found. Make sure Claude Code is installed and available on PATH.\n" +
+      "    Install with: npm install -g @anthropic-ai/claude-code"
+    );
   }
-  return res.text();
+
+  // Check gh CLI is available
+  try {
+    execFileSync("which", ["gh"], { stdio: "pipe" });
+    tee("    ✅  gh CLI found.");
+  } catch {
+    throw new Error(
+      "gh CLI not found. Make sure GitHub CLI is installed.\n" +
+      "    Install with: brew install gh"
+    );
+  }
+
+  // Check gh auth status
+  try {
+    execFileSync("gh", ["auth", "status"], { stdio: "pipe" });
+    tee("    ✅  gh auth valid.");
+  } catch {
+    throw new Error(
+      "gh auth check failed — your GitHub CLI session may have expired.\n" +
+      "    Re-authenticate with: gh auth login"
+    );
+  }
+
+  tee("    All checks passed.\n");
+}
+
+// ── Skill fetcher with retry ──────────────────────────────────────────────────
+
+async function fetchSkillWithRetry(
+  maxAttempts = 3,
+  delayMs = 2000
+): Promise<string> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetch(reviewSkillUrl, {
+        headers: {
+          Authorization: `token ${githubToken}`,
+          Accept: "application/vnd.github.raw",
+        },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+      return await res.text();
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (attempt < maxAttempts) {
+        await new Promise(r => setTimeout(r, delayMs * attempt)); // exponential backoff
+      }
+    }
+  }
+
+  throw new Error(`Failed to fetch skill after ${maxAttempts} attempts: ${lastError?.message}`);
 }
 
 // ── Claude Code runner ────────────────────────────────────────────────────────
@@ -124,7 +179,7 @@ async function reviewPR(
     const logFile = `logs/reviews/${id.replace(/\//g, "-").replace("#", "-")}.log`;
     const msg     = `Could not parse PR URL: ${prUrl ?? "undefined"}`;
     fs.mkdirSync(PR_LOGS_PATH, { recursive: true });
-    fs.writeFileSync(path.join(path.dirname(PR_LOGS_PATH), logFile), msg + "\n", "utf8");
+    fs.writeFileSync(path.join(PR_LOGS_PATH, `${id.replace(/\//g, "-").replace("#", "-")}.log`), msg + "\n", "utf8");
     orchLog(`  ⚠️  Could not parse PR info: ${pr.html_url}`);
     return {
       id, title: pr.title ?? "Unknown PR", url: pr.html_url,
@@ -135,13 +190,13 @@ async function reviewPR(
     };
   }
 
-  const owner      = match[1];
-  const repo       = match[2];
-  const pullNumber = parseInt(match[3], 10);
-  const id         = `${owner}/${repo}#${pullNumber}`;
+  const owner       = match[1];
+  const repo        = match[2];
+  const pullNumber  = parseInt(match[3], 10);
+  const id          = `${owner}/${repo}#${pullNumber}`;
   const logFilename = `${owner}-${repo}-${pullNumber}.log`;
-  const logPath    = path.join(PR_LOGS_PATH, logFilename);
-  const logFile    = `logs/reviews/${logFilename}`;
+  const logPath     = path.join(PR_LOGS_PATH, logFilename);
+  const logFile     = `logs/reviews/${logFilename}`;
 
   orchLog(`  🤖  Reviewing PR #${pullNumber} in ${owner}/${repo}: "${pr.title}"`);
   console.log(`  🤖  Reviewing PR #${pullNumber} in ${owner}/${repo}: "${pr.title}"`);
@@ -154,7 +209,6 @@ async function reviewPR(
     ]);
 
     const feedback = runWithClaudeCode(skill, pr.html_url, logPath, orchLog);
-
     console.log(`  ✅  PR #${pullNumber} review complete.`);
 
     return {
@@ -200,7 +254,6 @@ async function reviewPR(
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  // Create timestamped orchestration log for this run and clean up old ones
   const { logPath: orchLogPath, log: orchLog } = createOrchestrationLog();
   cleanupOldLogs();
 
@@ -209,22 +262,33 @@ async function main(): Promise<void> {
   tee("🚀  PR Review Agent starting...");
   tee(`📋  Log: ${orchLogPath}\n`);
 
-  // ── Step 1: fetch skill ───────────────────────────────────────────────────────
+  // ── Pre-flight checks ──────────────────────────────────────────────────────
+  try {
+    preflight(tee);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    tee(`❌  Pre-flight failed: ${message}`);
+    notify("PR Review Agent — Pre-flight Failed", message.split("\n")[0]);
+    process.exit(1);
+  }
+
+  // ── Fetch skill with retry ─────────────────────────────────────────────────
   tee(`📥  Fetching review skill from ${reviewSkillUrl} ...`);
   let skill: string;
   try {
-    skill = await fetchSkill();
+    skill = await fetchSkillWithRetry();
     tee(`    Loaded ${skill.length} characters.`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     tee(`❌  ${message}`);
+    notify("PR Review Agent — Skill Fetch Failed", message.split("\n")[0]);
     process.exit(1);
   }
 
   const username = await getAuthenticatedUsername(octokit);
   tee(`👤  Authenticated as ${username}`);
 
-  // ── Step 2: refresh status of all existing reviews ──────────────────────────
+  // ── Step 1: refresh status of all existing reviews ────────────────────────
   const existing = loadReviews();
   if (existing.length > 0) {
     tee(`\n🔄  Refreshing status of ${existing.length} existing review(s)...`);
@@ -235,7 +299,7 @@ async function main(): Promise<void> {
     saveReviews(refreshed);
   }
 
-  // ── Step 3: find PRs needing review ──────────────────────────────────────────
+  // ── Step 2: find PRs needing review ───────────────────────────────────────
   tee(`\n🔍  Searching for PRs requesting review from ${username}...`);
   const prs = await getPRsNeedingReview(octokit, username);
   tee(`    Found ${prs.length} PR(s) needing review.`);
@@ -246,7 +310,7 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // ── Step 4: review each PR in parallel via Claude Code ───────────────────────
+  // ── Step 3: review each PR in parallel via Claude Code ────────────────────
   tee(`\n📋  Reviewing ${prs.length} PR(s) in parallel via Claude Code...\n`);
 
   const results   = await Promise.all(prs.map((pr) => reviewPR(pr, skill, username, orchLog)));
@@ -255,17 +319,22 @@ async function main(): Promise<void> {
 
   tee(`\n✅  Completed: ${succeeded} succeeded, ${failed} failed.`);
 
-  // ── Step 5: merge and save ────────────────────────────────────────────────────
+  // ── Step 4: merge and save ─────────────────────────────────────────────────
   const currentReviews = loadReviews();
   const { merged, newCount, updatedCount } = mergeReviews(currentReviews, results);
   saveReviews(merged);
   tee(`💾  Results saved.`);
 
-  // ── Step 6: notify ────────────────────────────────────────────────────────────
+  // ── Step 5: notify ─────────────────────────────────────────────────────────
   const summary = buildNotificationSummary(newCount, updatedCount);
   if (summary) {
     notify("PR Review Agent", summary);
     tee(`🔔  Notification sent: ${summary}`);
+  }
+
+  if (failed > 0) {
+    notifyFailure(failed, orchLogPath);
+    tee(`🔔  Failure notification sent: ${failed} failed.`);
   }
 
   tee(`\n=== Run complete: ${new Date().toISOString()}`);

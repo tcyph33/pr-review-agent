@@ -322,13 +322,31 @@ The easiest way to discover what tools the skill needs is to run it once manuall
 
 ### GitHub CLI auth expired
 
-If `gh` auth expires, clones will fail. Re-authenticate with:
+The script checks `gh auth status` before running any reviews. If auth has expired you'll get a macOS notification saying "Pre-flight Failed" with the reason, and a clear error in the orchestration log. Re-authenticate with:
 
 ```bash
 gh auth login
 ```
 
 No other changes needed — the next run will work automatically.
+
+### claude or gh CLI not found
+
+The script checks for both CLIs at startup. If either is missing you'll get a "Pre-flight Failed" notification and a clear error in the orchestration log.
+
+Install Claude Code:
+```bash
+npm install -g @anthropic-ai/claude-code
+```
+
+Install GitHub CLI:
+```bash
+brew install gh && gh auth login
+```
+
+### PATH issues with launchd
+
+launchd runs with a minimal system PATH that may not include tools installed by Homebrew, nvm, or npm. `setup-macos.sh` resolves the full paths of `npx`, `claude`, `gh`, and `node` at setup time and injects them into the plist via `EnvironmentVariables`. If you install or move a tool after running setup, re-run `setup-macos.sh` to update the paths.
 
 ### Verifying autonomous operation
 
