@@ -79,7 +79,7 @@ function runWithClaudeCode(skill: string, prUrl: string): string {
       `claude --print --system-prompt "$(cat '${skillPath}')" "${message}"`,
       {
         encoding: "utf8",
-        timeout: 10 * 60 * 1000, // 10 minute timeout per PR
+        timeout: 30 * 60 * 1000, // 30 minute timeout per PR
         maxBuffer: 10 * 1024 * 1024, // 10MB output buffer
       }
     );

@@ -244,3 +244,101 @@ open ~/Library/LaunchAgents/com.pr-review-agent.plist
 launchctl unload ~/Library/LaunchAgents/com.pr-review-agent.plist
 launchctl load ~/Library/LaunchAgents/com.pr-review-agent.plist
 ```
+
+---
+
+## Troubleshooting
+
+### A PR review failed overnight
+
+The script catches Claude Code errors per PR and continues — one failure won't stop other reviews. Check the logs:
+
+```bash
+tail -f logs/out.log
+tail -f logs/err.log
+```
+
+A failed review looks like:
+```
+  🤖  Reviewing PR #42 in org/repo: "Add login flow"
+  ❌  Failed to review PR #42: Claude Code failed: Command failed: claude --print ...
+✅  Completed 1/2 reviews.
+```
+
+The PR card on the dashboard will have no new feedback. Re-run manually to retry:
+
+```bash
+npm run review
+```
+
+### Claude Code is hanging
+
+Each PR review has a 30 minute timeout. If Claude Code is waiting for a permission approval that was never pre-approved, it will sit there until the timeout fires, then log a failure and move on.
+
+To watch a run live:
+
+```bash
+tail -f logs/out.log
+```
+
+To kill a hung run manually:
+
+```bash
+# Find the script process
+ps aux | grep "run-reviews"
+kill <PID>
+
+# Kill any orphaned claude processes too
+pkill -f "claude --print"
+```
+
+launchd will not restart the review script after a kill — only the dashboard server auto-restarts. The next scheduled run will start fresh.
+
+### Claude Code prompts for approval on a tool
+
+If the skill tries to use a tool that isn't in `~/.claude/settings.json`, Claude Code will pause waiting for approval. This causes a hang until the 30 minute timeout fires.
+
+To fix it permanently, add the missing tool to `~/.claude/settings.json`:
+
+```json
+{
+  "allowedTools": [
+    "read",
+    "bash(gh pr view*)",
+    "bash(gh pr diff*)",
+    "bash(gh repo clone*)",
+    "bash(mkdir*)",
+    "bash(grep*)",
+    "bash(your-new-tool*)"
+  ]
+}
+```
+
+Then reload the launchd job:
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.pr-review-agent.plist
+launchctl load ~/Library/LaunchAgents/com.pr-review-agent.plist
+```
+
+The easiest way to discover what tools the skill needs is to run it once manually in an interactive Claude Code session and note any approval prompts that appear.
+
+### GitHub CLI auth expired
+
+If `gh` auth expires, clones will fail. Re-authenticate with:
+
+```bash
+gh auth login
+```
+
+No other changes needed — the next run will work automatically.
+
+### Verifying autonomous operation
+
+The safest way to confirm everything will run unattended overnight is one clean manual run:
+
+```bash
+npm run review
+```
+
+If it completes from start to finish with no prompts and no errors in the logs, every future scheduled run will behave identically. This is a one-time check per machine — you never need to repeat it.
