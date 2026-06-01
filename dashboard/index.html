@@ -42,16 +42,9 @@
       box-shadow: 0 0 6px #3fb950;
     }
 
-    .meta {
-      font-size: 0.8rem;
-      color: #8b949e;
-    }
+    .meta { font-size: 0.8rem; color: #8b949e; }
 
-    .actions {
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-    }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; }
 
     button {
       cursor: pointer;
@@ -64,32 +57,18 @@
     }
 
     button:hover { opacity: 0.85; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
 
-    .btn-primary {
-      background: #238636;
-      color: #fff;
-    }
+    .btn-primary   { background: #238636; color: #fff; }
+    .btn-secondary { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; }
+    .btn-danger    { background: #3d1c1c; color: #f85149; border: 1px solid #6e2020; }
+    .btn-ghost     { background: transparent; color: #8b949e; border: 1px solid #30363d; font-size: 0.75rem; padding: 6px 12px; }
+    .btn-dismiss   { background: transparent; color: #6e7681; border: 1px solid #30363d; font-size: 0.72rem; padding: 4px 10px; border-radius: 6px; }
+    .btn-dismiss:hover { color: #f85149; border-color: #6e2020; background: #1a0d0d; }
+    .btn-claude    { background: transparent; color: #a78bfa; border: 1px solid #4a2d8a; font-size: 0.72rem; padding: 4px 10px; border-radius: 6px; }
+    .btn-claude:hover { background: #1e1030; }
 
-    .btn-secondary {
-      background: #21262d;
-      color: #c9d1d9;
-      border: 1px solid #30363d;
-    }
-
-    .btn-ghost {
-      background: transparent;
-      color: #8b949e;
-      border: 1px solid #30363d;
-      font-size: 0.75rem;
-      padding: 6px 12px;
-    }
-
-    .summary-bar {
-      display: flex;
-      gap: 16px;
-      margin-bottom: 24px;
-      flex-wrap: wrap;
-    }
+    .summary-bar { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
 
     .stat {
       background: #161b22;
@@ -99,35 +78,21 @@
       min-width: 110px;
     }
 
-    .stat-value {
-      font-size: 1.5rem;
-      font-weight: 700;
-      color: #f0f6fc;
-    }
+    .stat-value { font-size: 1.5rem; font-weight: 700; color: #f0f6fc; }
+    .stat-label { font-size: 0.72rem; color: #8b949e; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.04em; }
 
-    .stat-label {
-      font-size: 0.72rem;
-      color: #8b949e;
-      margin-top: 2px;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-    }
-
-    .cards {
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
-    }
+    .cards { display: flex; flex-direction: column; gap: 16px; }
 
     .card {
       background: #161b22;
       border: 1px solid #30363d;
       border-radius: 10px;
       overflow: hidden;
-      transition: border-color 0.15s;
+      transition: border-color 0.15s, opacity 0.3s;
     }
 
     .card:hover { border-color: #58a6ff; }
+    .card.removing { opacity: 0; transform: scale(0.98); transition: opacity 0.2s, transform 0.2s; }
 
     .card-header {
       display: flex;
@@ -138,51 +103,33 @@
       flex-wrap: wrap;
     }
 
-    .card-title {
-      font-size: 1rem;
-      font-weight: 600;
-      color: #58a6ff;
-      text-decoration: none;
-      line-height: 1.4;
-    }
-
+    .card-title { font-size: 1rem; font-weight: 600; color: #58a6ff; text-decoration: none; line-height: 1.4; }
     .card-title:hover { text-decoration: underline; }
 
-    .card-meta {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 6px;
-      align-items: center;
-    }
+    .card-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; align-items: center; }
 
-    .badge {
-      font-size: 0.72rem;
-      padding: 2px 8px;
-      border-radius: 20px;
-      font-weight: 500;
-    }
-
+    .badge { font-size: 0.72rem; padding: 2px 8px; border-radius: 20px; font-weight: 500; }
     .badge-repo   { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
     .badge-author { background: #1f2d3d; color: #58a6ff; }
     .badge-files  { background: #1a2a1a; color: #3fb950; }
     .badge-add    { background: #1a2a1a; color: #3fb950; }
     .badge-del    { background: #2a1a1a; color: #f85149; }
-    .badge-time   { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
+    .badge-time            { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
+    .badge-state-pending   { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
+    .badge-state-commented { background: #1f2d3d; color: #58a6ff; border: 1px solid #1f4070; }
+    .badge-state-changes   { background: #2a1a0a; color: #e3b341; border: 1px solid #5a3800; }
+    .badge-state-approved  { background: #1a2a1a; color: #3fb950; border: 1px solid #1a4a1a; }
+    .badge-status-open   { display: none; }
+    .badge-status-merged { background: #2d1f4a; color: #a78bfa; border: 1px solid #4a2d8a; }
+    .badge-status-closed { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
+    .card-merged { opacity: 0.6; }
+    .card-closed { opacity: 0.6; }
 
-    .card-body {
-      border-top: 1px solid #21262d;
-      padding: 16px 20px;
-    }
+    .card-actions { display: flex; gap: 6px; flex-shrink: 0; }
 
-    .feedback-label {
-      font-size: 0.72rem;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: #8b949e;
-      margin-bottom: 10px;
-      font-weight: 600;
-    }
+    .card-body { border-top: 1px solid #21262d; padding: 16px 20px; }
+
+    .feedback-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: #8b949e; margin-bottom: 10px; font-weight: 600; }
 
     .feedback {
       font-size: 0.875rem;
@@ -196,25 +143,13 @@
     }
 
     .feedback.expanded { max-height: none; }
-
     .feedback::-webkit-scrollbar { width: 4px; }
     .feedback::-webkit-scrollbar-track { background: transparent; }
     .feedback::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
 
-    .card-footer {
-      padding: 10px 20px;
-      display: flex;
-      justify-content: flex-end;
-      gap: 8px;
-      border-top: 1px solid #21262d;
-    }
+    .card-footer { padding: 10px 20px; display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid #21262d; }
 
-    .empty {
-      text-align: center;
-      padding: 80px 24px;
-      color: #8b949e;
-    }
-
+    .empty { text-align: center; padding: 80px 24px; color: #8b949e; }
     .empty h2 { font-size: 1.1rem; margin-bottom: 8px; color: #c9d1d9; }
     .empty p  { font-size: 0.85rem; }
 
@@ -229,10 +164,23 @@
       display: none;
     }
 
-    .refreshed {
-      font-size: 0.75rem;
-      color: #8b949e;
+    .confirm-banner {
+      background: #1c2128;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 14px 18px;
+      font-size: 0.85rem;
+      margin-bottom: 24px;
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
     }
+
+    .confirm-banner.visible { display: flex; }
+    .confirm-banner span { color: #c9d1d9; }
+    .confirm-banner .confirm-actions { display: flex; gap: 8px; }
   </style>
 </head>
 <body>
@@ -240,20 +188,26 @@
 <header>
   <div>
     <h1><span class="dot"></span> PR Review Dashboard</h1>
-    <div class="meta refreshed" id="refreshed-at"></div>
+    <div class="meta" id="refreshed-at"></div>
   </div>
   <div class="actions">
     <button class="btn-ghost" onclick="loadReviews()">↺ Refresh</button>
-    <button class="btn-secondary" id="btn-open-all" onclick="openAll()" style="display:none">
-      Open All PRs in Tabs
-    </button>
+    <button class="btn-danger" id="btn-clear-all" onclick="confirmClearAll()" style="display:none">Clear All</button>
+    <button class="btn-primary" id="btn-open-all" onclick="openAll()" style="display:none">Open All</button>
   </div>
 </header>
 
 <div class="error-banner" id="error-banner"></div>
 
-<div class="summary-bar" id="summary-bar"></div>
+<div class="confirm-banner" id="confirm-banner">
+  <span>Remove all reviews? This cannot be undone.</span>
+  <div class="confirm-actions">
+    <button class="btn-ghost" onclick="cancelClearAll()">Cancel</button>
+    <button class="btn-danger" onclick="clearAll()">Yes, clear all</button>
+  </div>
+</div>
 
+<div class="summary-bar" id="summary-bar"></div>
 <div class="cards" id="cards"></div>
 
 <script>
@@ -262,45 +216,52 @@
   function timeAgo(isoString) {
     const diff = Date.now() - new Date(isoString).getTime();
     const mins = Math.floor(diff / 60000);
-    if (mins < 1)   return "just now";
-    if (mins < 60)  return `${mins}m ago`;
+    if (mins < 1)  return "just now";
+    if (mins < 60) return `${mins}m ago`;
     const hrs = Math.floor(mins / 60);
-    if (hrs < 24)   return `${hrs}h ago`;
+    if (hrs < 24)  return `${hrs}h ago`;
     return `${Math.floor(hrs / 24)}d ago`;
+  }
+
+  function prAgeDays(r) {
+    const created = r.prCreatedAt ? new Date(r.prCreatedAt) : new Date(r.reviewedAt);
+    return Math.floor((Date.now() - created.getTime()) / 86400000);
   }
 
   function renderSummary() {
     const bar = document.getElementById("summary-bar");
     const repos = new Set(reviews.map(r => r.repo)).size;
-    const latest = reviews.length
-      ? new Date(Math.max(...reviews.map(r => new Date(r.reviewedAt)))).toLocaleString()
-      : "—";
-
+    const ages = reviews.map(r => prAgeDays(r));
+    const oldest = ages.length ? Math.max(...ages) : 0;
+    const avg = ages.length ? Math.round(ages.reduce((s,a) => s + a, 0) / ages.length) : 0;
+    const oldestLabel = oldest === 1 ? '1 day' : oldest + ' days';
+    const avgLabel = avg === 1 ? '1 day' : avg + ' days';
     bar.innerHTML = `
-      <div class="stat"><div class="stat-value">${reviews.length}</div><div class="stat-label">PRs Reviewed</div></div>
+      <div class="stat"><div class="stat-value">${reviews.length}</div><div class="stat-label">PRs Pending</div></div>
       <div class="stat"><div class="stat-value">${repos}</div><div class="stat-label">Repos</div></div>
-      <div class="stat"><div class="stat-value">${reviews.reduce((s,r) => s + r.additions, 0)}</div><div class="stat-label">Lines Added</div></div>
-      <div class="stat"><div class="stat-value">${reviews.reduce((s,r) => s + r.deletions, 0)}</div><div class="stat-label">Lines Removed</div></div>
+      <div class="stat"><div class="stat-value">${oldestLabel}</div><div class="stat-label">Oldest PR</div></div>
+      <div class="stat"><div class="stat-value">${avgLabel}</div><div class="stat-label">Avg PR Age</div></div>
     `;
   }
 
   function renderCards() {
     const container = document.getElementById("cards");
+    const hasReviews = reviews.length > 0;
 
-    if (reviews.length === 0) {
+    document.getElementById("btn-open-all").style.display = hasReviews ? "" : "none";
+    document.getElementById("btn-clear-all").style.display = hasReviews ? "" : "none";
+
+    if (!hasReviews) {
       container.innerHTML = `
         <div class="empty">
           <h2>No reviews yet</h2>
           <p>Run <code>npm run review</code> to fetch and review open PRs.</p>
         </div>`;
-      document.getElementById("btn-open-all").style.display = "none";
       return;
     }
 
-    document.getElementById("btn-open-all").style.display = "";
-
     container.innerHTML = reviews.map((r, i) => `
-      <div class="card">
+      <div class="card card-${r.prStatus || 'open'} " id="card-${i}">
         <div class="card-header">
           <div>
             <a class="card-title" href="${r.url}" target="_blank">${escHtml(r.title)}</a>
@@ -310,12 +271,14 @@
               <span class="badge badge-files">${r.filesChanged} file${r.filesChanged !== 1 ? "s" : ""}</span>
               <span class="badge badge-add">+${r.additions}</span>
               <span class="badge badge-del">-${r.deletions}</span>
-              <span class="badge badge-time">${timeAgo(r.reviewedAt)}</span>
+              <span class="badge badge-time">${timeAgo(r.reviewedAt)}</span>\n              ${reviewStateBadge(r.reviewState || "PENDING")}\n              ${prStatusBadge(r.prStatus)}
             </div>
           </div>
-          <a href="${r.url}" target="_blank">
-            <button class="btn-ghost">Open PR ↗</button>
-          </a>
+          <div class="card-actions">
+            <a href="${r.url}" target="_blank"><button class="btn-ghost">Open PR ↗</button></a>
+            <button class="btn-claude" onclick="openInClaude('${escHtml(r.id)}')">⬡ Claude Code</button>
+            <button class="btn-dismiss" onclick="dismissReview('${escHtml(r.id)}', ${i})">✕ Dismiss</button>
+          </div>
         </div>
         <div class="card-body">
           <div class="feedback-label">Agent Feedback</div>
@@ -338,6 +301,24 @@
     reviews.forEach(r => window.open(r.url, "_blank"));
   }
 
+  function prStatusBadge(status) {
+    if (!status || status === 'open') return '';
+    if (status === 'merged') return '<span class="badge badge-status-merged">⎇ Merged</span>';
+    if (status === 'closed') return '<span class="badge badge-status-closed">✕ Closed</span>';
+    return '';
+  }
+
+  function reviewStateBadge(state) {
+    const map = {
+      PENDING:           ['badge-state-pending',   '● Pending'],
+      COMMENTED:         ['badge-state-commented', '● Commented'],
+      CHANGES_REQUESTED: ['badge-state-changes',   '● Changes requested'],
+      APPROVED:          ['badge-state-approved',  '✓ Approved'],
+    };
+    const [cls, label] = map[state] || map['PENDING'];
+    return `<span class="badge ${cls}">${label}</span>`;
+  }
+
   function escHtml(str) {
     return String(str)
       .replace(/&/g, "&amp;")
@@ -346,31 +327,79 @@
       .replace(/"/g, "&quot;");
   }
 
-  async function loadReviews() {
-    const errorBanner = document.getElementById("error-banner");
-    errorBanner.style.display = "none";
+  async function openInClaude(id) {
+    try {
+      const res = await fetch(`/api/open-in-claude/${encodeURIComponent(id)}`);
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+    } catch (err) {
+      showError(`Could not open in Claude Code: ${err.message}`);
+    }
+  }
+
+  async function dismissReview(id, i) {
+    const card = document.getElementById(`card-${i}`);
+    card.classList.add("removing");
 
     try {
-      const res = await fetch("../results/reviews.json?nocache=" + Date.now());
+      const res = await fetch(`/api/reviews/${encodeURIComponent(id)}`, { method: "DELETE" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      reviews = await res.json();
+      reviews = reviews.filter(r => r.id !== id);
+      setTimeout(() => { renderSummary(); renderCards(); }, 220);
+    } catch (err) {
+      card.classList.remove("removing");
+      showError(`Could not dismiss review: ${err.message}`);
+    }
+  }
 
+  function confirmClearAll() {
+    document.getElementById("confirm-banner").classList.add("visible");
+  }
+
+  function cancelClearAll() {
+    document.getElementById("confirm-banner").classList.remove("visible");
+  }
+
+  async function clearAll() {
+    cancelClearAll();
+    try {
+      const res = await fetch("/api/reviews", { method: "DELETE" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      reviews = [];
       renderSummary();
       renderCards();
+    } catch (err) {
+      showError(`Could not clear reviews: ${err.message}`);
+    }
+  }
 
+  function showError(msg) {
+    const banner = document.getElementById("error-banner");
+    banner.style.display = "";
+    banner.textContent = msg;
+    setTimeout(() => { banner.style.display = "none"; }, 5000);
+  }
+
+  async function loadReviews() {
+    document.getElementById("error-banner").style.display = "none";
+    try {
+      const res = await fetch("/results/reviews.json?nocache=" + Date.now());
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const raw = await res.json();
+      reviews = [...raw.filter(r => !r.prStatus || r.prStatus === 'open'), ...raw.filter(r => r.prStatus && r.prStatus !== 'open')];
+      renderSummary();
+      renderCards();
       document.getElementById("refreshed-at").textContent =
         "Last refreshed: " + new Date().toLocaleTimeString();
     } catch (err) {
-      errorBanner.style.display = "";
-      errorBanner.textContent =
-        `Could not load reviews.json: ${err.message}. ` +
-        `Make sure the dashboard server is running from the repo root (npx serve .).`;
+      showError(`Could not load reviews.json: ${err.message}. Make sure server.ts is running.`);
       document.getElementById("cards").innerHTML = "";
       document.getElementById("summary-bar").innerHTML = "";
     }
   }
 
-  // Load on page open, then auto-refresh every 60 seconds
   loadReviews();
   setInterval(loadReviews, 60000);
 </script>
