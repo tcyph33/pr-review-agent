@@ -2,13 +2,20 @@
   "compilerOptions": {
     "target": "ES2022",
     "module": "ESNext",
-    "moduleResolution": "bundler",
+    "moduleResolution": "node16",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "outDir": "./dist"
   },
-  "include": ["run-reviews.ts"],
-  "exclude": ["node_modules", "dist"]
+  "include": [
+    "run-reviews.ts",
+    "server.ts",
+    "lib/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
 }
