@@ -23,6 +23,7 @@ import {
   createOrchestrationLog,
   cleanupOldLogs,
   PR_LOGS_PATH,
+  RESULTS_PATH,
 } from "./lib/storage.js";
 import type { PRReview } from "./lib/storage.js";
 import { notify, notifyFailure, buildNotificationSummary } from "./lib/notify.js";
@@ -256,6 +257,12 @@ async function reviewPR(
 async function main(): Promise<void> {
   const { logPath: orchLogPath, log: orchLog } = createOrchestrationLog();
   cleanupOldLogs();
+
+  // Clean up any orphaned .tmp file left by a previous run killed mid-write
+  const tmpPath = RESULTS_PATH + ".tmp";
+  if (fs.existsSync(tmpPath)) {
+    fs.unlinkSync(tmpPath);
+  }
 
   const tee = (msg: string) => { console.log(msg); orchLog(msg); };
 
