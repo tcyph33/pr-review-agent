@@ -1,14 +1,20 @@
 #!/usr/bin/env npx tsx
 
+import "dotenv/config";
 import http from "http";
 import fs from "fs";
+import os from "os";
 import path from "path";
+import { execSync } from "child_process";
 import { fileURLToPath } from "url";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const __dirname    = path.dirname(fileURLToPath(import.meta.url));
 const RESULTS_PATH = path.join(__dirname, "results", "reviews.json");
 const DASHBOARD_PATH = path.join(__dirname, "dashboard");
-const PORT = 3000;
+const PORT         = 3000;
+
+const GITHUB_TOKEN     = process.env.GITHUB_TOKEN;
+const REVIEW_SKILL_URL = process.env.REVIEW_SKILL_URL;
 
 const MIME: Record<string, string> = {
   ".html": "text/html",
@@ -17,7 +23,26 @@ const MIME: Record<string, string> = {
   ".json": "application/json",
 };
 
-function readReviews(): object[] {
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+interface Review {
+  id: string;
+  url: string;
+  title: string;
+  repo: string;
+  pull_number: number;
+  author: string;
+  branch: string;
+  feedback: string;
+  reviewState: string;
+  prStatus: string;
+  prCreatedAt: string;
+  reviewedAt: string;
+}
+
+// ── Storage ───────────────────────────────────────────────────────────────────
+
+function readReviews(): Review[] {
   try {
     return JSON.parse(fs.readFileSync(RESULTS_PATH, "utf8"));
   } catch {
@@ -25,11 +50,68 @@ function readReviews(): object[] {
   }
 }
 
-function writeReviews(reviews: object[]): void {
+function writeReviews(reviews: Review[]): void {
   fs.writeFileSync(RESULTS_PATH, JSON.stringify(reviews, null, 2));
 }
 
-const server = http.createServer((req, res) => {
+function findReview(id: string): Review | null {
+  return readReviews().find((r) => r.id === id) ?? null;
+}
+
+// ── Claude Code launcher ──────────────────────────────────────────────────────
+
+async function fetchSkill(): Promise<string> {
+  if (!REVIEW_SKILL_URL || !GITHUB_TOKEN) {
+    throw new Error("REVIEW_SKILL_URL and GITHUB_TOKEN must be set in environment");
+  }
+  const res = await fetch(REVIEW_SKILL_URL, {
+    headers: {
+      Authorization: `token ${GITHUB_TOKEN}`,
+      Accept: "application/vnd.github.raw",
+    },
+  });
+  if (!res.ok) throw new Error(`Failed to fetch skill: ${res.status} ${res.statusText}`);
+  return res.text();
+}
+
+function buildClaudeMessage(review: Review): string {
+  return [
+    `PR URL: ${review.url}`,
+    ``,
+    `The automated review agent already reviewed this PR. Here is its feedback for additional context:`,
+    ``,
+    review.feedback,
+    ``,
+    `Please use the above PR URL and agent feedback as context for our discussion.`,
+  ].join("\n");
+}
+
+async function launchClaudeCode(review: Review): Promise<void> {
+  if (os.platform() !== "darwin") {
+    throw new Error("Launching Claude Code from the dashboard is currently only supported on macOS");
+  }
+
+  const skill   = await fetchSkill();
+  const message = buildClaudeMessage(review);
+
+  // Write skill and message to temp files to avoid shell escaping issues
+  const skillPath   = path.join(os.tmpdir(), "pr-review-skill.md");
+  const messagePath = path.join(os.tmpdir(), "pr-review-message.txt");
+
+  fs.writeFileSync(skillPath, skill, "utf8");
+  fs.writeFileSync(messagePath, message, "utf8");
+
+  const command = `claude --system-prompt "$(cat '${skillPath}')" "$(cat '${messagePath}')"`;
+
+  // Open a new Terminal window and run the command
+  execSync(
+    `osascript -e 'tell application "Terminal" to do script "${command.replace(/"/g, '\\"')}"'`
+  );
+}
+
+// ── Request handler ───────────────────────────────────────────────────────────
+
+const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
 
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -42,10 +124,33 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // ── GET /api/open-in-claude/:id ───────────────────────────────────────────
+  if (req.method === "GET" && url.pathname.startsWith("/api/open-in-claude/")) {
+    const id     = decodeURIComponent(url.pathname.replace("/api/open-in-claude/", ""));
+    const review = findReview(id);
+
+    if (!review) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Review not found" }));
+      return;
+    }
+
+    try {
+      await launchClaudeCode(review);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: message }));
+    }
+    return;
+  }
+
   // ── DELETE /api/reviews/:id ───────────────────────────────────────────────
   if (req.method === "DELETE" && url.pathname.startsWith("/api/reviews/")) {
-    const id = decodeURIComponent(url.pathname.replace("/api/reviews/", ""));
-    const reviews = readReviews() as Array<{ id: string }>;
+    const id      = decodeURIComponent(url.pathname.replace("/api/reviews/", ""));
+    const reviews = readReviews();
     const filtered = reviews.filter((r) => r.id !== id);
 
     if (filtered.length === reviews.length) {
@@ -89,7 +194,7 @@ const server = http.createServer((req, res) => {
     }
 
     if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-      const ext = path.extname(filePath);
+      const ext  = path.extname(filePath);
       const mime = MIME[ext] ?? "application/octet-stream";
       res.writeHead(200, { "Content-Type": mime });
       fs.createReadStream(filePath).pipe(res);

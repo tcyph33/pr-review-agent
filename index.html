@@ -65,6 +65,8 @@
     .btn-ghost     { background: transparent; color: #8b949e; border: 1px solid #30363d; font-size: 0.75rem; padding: 6px 12px; }
     .btn-dismiss   { background: transparent; color: #6e7681; border: 1px solid #30363d; font-size: 0.72rem; padding: 4px 10px; border-radius: 6px; }
     .btn-dismiss:hover { color: #f85149; border-color: #6e2020; background: #1a0d0d; }
+    .btn-claude    { background: transparent; color: #a78bfa; border: 1px solid #4a2d8a; font-size: 0.72rem; padding: 4px 10px; border-radius: 6px; }
+    .btn-claude:hover { background: #1e1030; }
 
     .summary-bar { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
 
@@ -117,6 +119,11 @@
     .badge-state-commented { background: #1f2d3d; color: #58a6ff; border: 1px solid #1f4070; }
     .badge-state-changes   { background: #2a1a0a; color: #e3b341; border: 1px solid #5a3800; }
     .badge-state-approved  { background: #1a2a1a; color: #3fb950; border: 1px solid #1a4a1a; }
+    .badge-status-open   { display: none; }
+    .badge-status-merged { background: #2d1f4a; color: #a78bfa; border: 1px solid #4a2d8a; }
+    .badge-status-closed { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
+    .card-merged { opacity: 0.6; }
+    .card-closed { opacity: 0.6; }
 
     .card-actions { display: flex; gap: 6px; flex-shrink: 0; }
 
@@ -254,7 +261,7 @@
     }
 
     container.innerHTML = reviews.map((r, i) => `
-      <div class="card" id="card-${i}">
+      <div class="card card-${r.prStatus || 'open'} " id="card-${i}">
         <div class="card-header">
           <div>
             <a class="card-title" href="${r.url}" target="_blank">${escHtml(r.title)}</a>
@@ -264,11 +271,12 @@
               <span class="badge badge-files">${r.filesChanged} file${r.filesChanged !== 1 ? "s" : ""}</span>
               <span class="badge badge-add">+${r.additions}</span>
               <span class="badge badge-del">-${r.deletions}</span>
-              <span class="badge badge-time">${timeAgo(r.reviewedAt)}</span>\n              ${reviewStateBadge(r.reviewState || "PENDING")}
+              <span class="badge badge-time">${timeAgo(r.reviewedAt)}</span>\n              ${reviewStateBadge(r.reviewState || "PENDING")}\n              ${prStatusBadge(r.prStatus)}
             </div>
           </div>
           <div class="card-actions">
             <a href="${r.url}" target="_blank"><button class="btn-ghost">Open PR ↗</button></a>
+            <button class="btn-claude" onclick="openInClaude('${escHtml(r.id)}')">⬡ Claude Code</button>
             <button class="btn-dismiss" onclick="dismissReview('${escHtml(r.id)}', ${i})">✕ Dismiss</button>
           </div>
         </div>
@@ -293,6 +301,13 @@
     reviews.forEach(r => window.open(r.url, "_blank"));
   }
 
+  function prStatusBadge(status) {
+    if (!status || status === 'open') return '';
+    if (status === 'merged') return '<span class="badge badge-status-merged">⎇ Merged</span>';
+    if (status === 'closed') return '<span class="badge badge-status-closed">✕ Closed</span>';
+    return '';
+  }
+
   function reviewStateBadge(state) {
     const map = {
       PENDING:           ['badge-state-pending',   '● Pending'],
@@ -310,6 +325,18 @@
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
+  }
+
+  async function openInClaude(id) {
+    try {
+      const res = await fetch(`/api/open-in-claude/${encodeURIComponent(id)}`);
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+    } catch (err) {
+      showError(`Could not open in Claude Code: ${err.message}`);
+    }
   }
 
   async function dismissReview(id, i) {
@@ -360,7 +387,8 @@
     try {
       const res = await fetch("/results/reviews.json?nocache=" + Date.now());
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      reviews = await res.json();
+      const raw = await res.json();
+      reviews = [...raw.filter(r => !r.prStatus || r.prStatus === 'open'), ...raw.filter(r => r.prStatus && r.prStatus !== 'open')];
       renderSummary();
       renderCards();
       document.getElementById("refreshed-at").textContent =
