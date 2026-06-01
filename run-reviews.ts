@@ -1,23 +1,32 @@
 #!/usr/bin/env npx tsx
 
 import "dotenv/config";
-import { createOctokit, getAuthenticatedUsername, getPRsNeedingReview, getPRDiff, getPRDetails, getPRFiles, getMyReviewState, refreshPRStatuses } from "./lib/github.js";
+import { execSync } from "child_process";
+import os from "os";
+import fs from "fs";
+import path from "path";
+import {
+  createOctokit,
+  getAuthenticatedUsername,
+  getPRsNeedingReview,
+  getPRDetails,
+  getPRFiles,
+  getMyReviewState,
+  refreshPRStatuses,
+} from "./lib/github.js";
 import type { SearchPRItem } from "./lib/github.js";
-import { createAnthropic, fetchReviewSkill, reviewPRWithClaude } from "./lib/claude.js";
 import { loadReviews, saveReviews, mergeReviews, applyStatusUpdates } from "./lib/storage.js";
 import type { PRReview } from "./lib/storage.js";
 import { notify, buildNotificationSummary } from "./lib/notify.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const GITHUB_TOKEN      = process.env.GITHUB_TOKEN;
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-const REVIEW_SKILL_URL  = process.env.REVIEW_SKILL_URL;
+const GITHUB_TOKEN     = process.env.GITHUB_TOKEN;
+const REVIEW_SKILL_URL = process.env.REVIEW_SKILL_URL;
 
 const missing = (
   [
     ["GITHUB_TOKEN",      GITHUB_TOKEN],
-    ["ANTHROPIC_API_KEY", ANTHROPIC_API_KEY],
     ["REVIEW_SKILL_URL",  REVIEW_SKILL_URL],
   ] as [string, string | undefined][]
 )
@@ -31,20 +40,61 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
-const githubToken     = GITHUB_TOKEN!;
-const anthropicApiKey = ANTHROPIC_API_KEY!;
-const reviewSkillUrl  = REVIEW_SKILL_URL!;
+const githubToken    = GITHUB_TOKEN!;
+const reviewSkillUrl = REVIEW_SKILL_URL!;
 
 // ── Clients ───────────────────────────────────────────────────────────────────
 
-const octokit   = createOctokit(githubToken);
-const anthropic = createAnthropic(anthropicApiKey);
+const octokit = createOctokit(githubToken);
+
+// ── Skill fetcher ─────────────────────────────────────────────────────────────
+
+async function fetchSkill(): Promise<string> {
+  console.log(`📥  Fetching review skill from ${reviewSkillUrl} ...`);
+  const res = await fetch(reviewSkillUrl, {
+    headers: {
+      Authorization: `token ${githubToken}`,
+      Accept: "application/vnd.github.raw",
+    },
+  });
+  if (!res.ok) {
+    console.error(`❌  Failed to fetch skill: ${res.status} ${res.statusText}`);
+    process.exit(1);
+  }
+  const text = await res.text();
+  console.log(`    Loaded ${text.length} characters.`);
+  return text;
+}
+
+// ── Claude Code runner ────────────────────────────────────────────────────────
+
+function runWithClaudeCode(skill: string, prUrl: string): string {
+  const skillPath = path.join(os.tmpdir(), "pr-review-skill.md");
+  fs.writeFileSync(skillPath, skill, "utf8");
+
+  const message = `/code-review ${prUrl}`;
+
+  try {
+    const output = execSync(
+      `claude --print --system-prompt "$(cat '${skillPath}')" "${message}"`,
+      {
+        encoding: "utf8",
+        timeout: 10 * 60 * 1000, // 10 minute timeout per PR
+        maxBuffer: 10 * 1024 * 1024, // 10MB output buffer
+      }
+    );
+    return output.trim();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`Claude Code failed: ${message}`);
+  }
+}
 
 // ── Per-PR review ─────────────────────────────────────────────────────────────
 
 async function reviewPR(
   pr: SearchPRItem,
-  reviewSkill: string,
+  skill: string,
   username: string
 ): Promise<PRReview | null> {
   const prUrl = pr.pull_request?.url;
@@ -66,16 +116,13 @@ async function reviewPR(
   console.log(`  🤖  Reviewing PR #${pullNumber} in ${owner}/${repo}: "${pr.title}"`);
 
   try {
-    const [diff, files, details, reviewState] = await Promise.all([
-      getPRDiff(octokit, owner, repo, pullNumber),
+    const [files, details, reviewState] = await Promise.all([
       getPRFiles(octokit, owner, repo, pullNumber),
       getPRDetails(octokit, owner, repo, pullNumber),
       getMyReviewState(octokit, owner, repo, pullNumber, username),
     ]);
 
-    const feedback = await reviewPRWithClaude(
-      anthropic, reviewSkill, pr, owner, repo, pullNumber, details, files, diff
-    );
+    const feedback = runWithClaudeCode(skill, pr.html_url);
 
     return {
       id:           `${owner}/${repo}#${pullNumber}`,
@@ -106,15 +153,15 @@ async function reviewPR(
 async function main(): Promise<void> {
   console.log("🚀  PR Review Agent starting...\n");
 
-  const reviewSkill = await fetchReviewSkill(reviewSkillUrl, githubToken);
-  const username    = await getAuthenticatedUsername(octokit);
+  const skill    = await fetchSkill();
+  const username = await getAuthenticatedUsername(octokit);
 
   // ── Step 1: refresh status of all existing reviews ──────────────────────────
   const existing = loadReviews();
   if (existing.length > 0) {
     console.log(`\n🔄  Refreshing status of ${existing.length} existing review(s)...`);
-    const statusMap = await refreshPRStatuses(octokit, existing);
-    const refreshed = applyStatusUpdates(existing, statusMap);
+    const statusMap    = await refreshPRStatuses(octokit, existing);
+    const refreshed    = applyStatusUpdates(existing, statusMap);
     const mergedClosed = refreshed.filter(r => r.prStatus !== "open").length;
     if (mergedClosed > 0) {
       console.log(`    ${mergedClosed} PR(s) are now merged or closed.`);
@@ -122,7 +169,7 @@ async function main(): Promise<void> {
     saveReviews(refreshed);
   }
 
-  // ── Step 2: find and review new/updated PRs ──────────────────────────────────
+  // ── Step 2: find PRs needing review ──────────────────────────────────────────
   console.log(`\n🔍  Searching for PRs requesting review from ${username}...`);
   const prs = await getPRsNeedingReview(octokit, username);
   console.log(`    Found ${prs.length} PR(s) needing review.`);
@@ -133,20 +180,27 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  console.log(`\n📋  Reviewing ${prs.length} PR(s) in parallel...\n`);
+  // ── Step 3: review each PR via Claude Code ───────────────────────────────────
+  // Note: reviews run sequentially, not in parallel, because each Claude Code
+  // invocation clones a repo and runs gh commands — parallel runs risk git/gh
+  // conflicts and excessive disk usage.
+  console.log(`\n📋  Reviewing ${prs.length} PR(s) via Claude Code...\n`);
 
-  const results    = await Promise.all(prs.map((pr) => reviewPR(pr, reviewSkill, username)));
-  const successful = results.filter((r): r is PRReview => r !== null);
+  const successful: PRReview[] = [];
+  for (const pr of prs) {
+    const result = await reviewPR(pr, skill, username);
+    if (result) successful.push(result);
+  }
 
   console.log(`\n✅  Completed ${successful.length}/${prs.length} reviews.`);
 
-  // ── Step 3: merge and save ───────────────────────────────────────────────────
+  // ── Step 4: merge and save ───────────────────────────────────────────────────
   const currentReviews = loadReviews();
   const { merged, newCount, updatedCount } = mergeReviews(currentReviews, successful);
   saveReviews(merged);
   console.log(`💾  Results saved.`);
 
-  // ── Step 4: notify ───────────────────────────────────────────────────────────
+  // ── Step 5: notify ───────────────────────────────────────────────────────────
   const summary = buildNotificationSummary(newCount, updatedCount);
   if (summary) {
     notify("PR Review Agent", summary);

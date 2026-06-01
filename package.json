@@ -10,7 +10,6 @@
     "server": "npx tsx server.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0",
     "@octokit/rest": "^21.0.0",
     "dotenv": "^16.4.0"
   },

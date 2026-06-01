@@ -76,13 +76,11 @@ async function fetchSkill(): Promise<string> {
 
 function buildClaudeMessage(review: Review): string {
   return [
-    `PR URL: ${review.url}`,
+    `/code-review ${review.url}`,
     ``,
-    `The automated review agent already reviewed this PR. Here is its feedback for additional context:`,
+    `The automated review agent already reviewed this PR. Here is its prior feedback for additional context — use it to inform your review and our discussion:`,
     ``,
     review.feedback,
-    ``,
-    `Please use the above PR URL and agent feedback as context for our discussion.`,
   ].join("\n");
 }
 

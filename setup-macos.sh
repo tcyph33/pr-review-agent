@@ -20,6 +20,54 @@ else
   echo "📝  .env already exists, skipping."
 fi
 
+# ── Claude Code permissions ───────────────────────────────────────────────────
+
+echo "🔐  Configuring Claude Code permissions for autonomous PR review..."
+
+CLAUDE_SETTINGS_DIR="$HOME/.claude"
+CLAUDE_SETTINGS_FILE="$CLAUDE_SETTINGS_DIR/settings.json"
+
+mkdir -p "$CLAUDE_SETTINGS_DIR"
+
+if [ -f "$CLAUDE_SETTINGS_FILE" ]; then
+  echo "    ~/.claude/settings.json already exists — merging allowedTools..."
+  # Use node to safely merge allowedTools into existing settings
+  node -e "
+    const fs = require('fs');
+    const path = '$CLAUDE_SETTINGS_FILE';
+    let settings = {};
+    try { settings = JSON.parse(fs.readFileSync(path, 'utf8')); } catch {}
+    const required = [
+      'read',
+      'bash(gh pr view*)',
+      'bash(gh pr diff*)',
+      'bash(gh repo clone*)',
+      'bash(mkdir*)',
+      'bash(grep*)'
+    ];
+    const existing = settings.allowedTools || [];
+    const merged = Array.from(new Set([...existing, ...required]));
+    settings.allowedTools = merged;
+    fs.writeFileSync(path, JSON.stringify(settings, null, 2));
+    console.log('    Merged. allowedTools:', merged.join(', '));
+  "
+else
+  echo "    Creating ~/.claude/settings.json..."
+  cat > "$CLAUDE_SETTINGS_FILE" << 'CLAUDE_SETTINGS'
+{
+  "allowedTools": [
+    "read",
+    "bash(gh pr view*)",
+    "bash(gh pr diff*)",
+    "bash(gh repo clone*)",
+    "bash(mkdir*)",
+    "bash(grep*)"
+  ]
+}
+CLAUDE_SETTINGS
+  echo "    Created with PR review permissions."
+fi
+
 # ── launchd ───────────────────────────────────────────────────────────────────
 
 REPO_PATH=$(pwd)
@@ -107,8 +155,10 @@ echo "✅  Setup complete."
 echo ""
 echo "   Next steps:"
 echo "   1. Set your keys in .env, or export them as environment variables"
-echo "   2. Test manually: npm run review"
-echo "   3. Dashboard: http://localhost:3000/dashboard/"
+echo "   2. Ensure GitHub CLI is installed and authenticated: gh auth login"
+echo "   3. Test manually: npm run review"
+echo "   4. Dashboard: http://localhost:3000/dashboard/"
 echo ""
 echo "   The review script will run at 2am and 2pm daily."
 echo "   The dashboard server is running now in the background."
+echo "   Claude Code is configured to run PR reviews autonomously."
