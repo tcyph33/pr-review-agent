@@ -106,10 +106,8 @@ cat > ~/Library/LaunchAgents/com.pr-review-agent.plist << PLIST
       <integer>0</integer>
     </dict>
   </array>
-  <key>StandardOutPath</key>
-  <string>$REPO_PATH/logs/out.log</string>
   <key>StandardErrorPath</key>
-  <string>$REPO_PATH/logs/err.log</string>
+  <string>$REPO_PATH/logs/launchd-err.log</string>
   <key>RunAtLoad</key>
   <false/>
 </dict>

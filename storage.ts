@@ -4,8 +4,11 @@ import { fileURLToPath } from "url";
 import type { ReviewState, PRStatus } from "./github.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const RESULTS_PATH  = path.join(__dirname, "..", "results", "reviews.json");
-export const PR_LOGS_PATH  = path.join(__dirname, "..", "logs", "reviews");
+export const RESULTS_PATH        = path.join(__dirname, "..", "results", "reviews.json");
+export const PR_LOGS_PATH        = path.join(__dirname, "..", "logs", "reviews");
+export const ORCH_LOGS_PATH      = path.join(__dirname, "..", "logs", "orchestration");
+export const LAUNCHD_ERR_LOG     = path.join(__dirname, "..", "logs", "launchd-err.log");
+const LOG_RETENTION_MS           = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -31,7 +34,49 @@ export interface PRReview {
   logFile: string; // relative path: logs/reviews/<id>.log
 }
 
-// ── Log helpers ───────────────────────────────────────────────────────────────
+// ── Orchestration log helpers ─────────────────────────────────────────────────
+
+export function createOrchestrationLog(): { logPath: string; log: (msg: string) => void } {
+  if (!fs.existsSync(ORCH_LOGS_PATH)) fs.mkdirSync(ORCH_LOGS_PATH, { recursive: true });
+
+  const now       = new Date();
+  const timestamp = now.toISOString().replace(/[:.]/g, "-").replace("T", "_").slice(0, 19);
+  const logPath   = path.join(ORCH_LOGS_PATH, `${timestamp}.log`);
+
+  fs.writeFileSync(logPath, `=== PR Review Agent Run\n=== Started: ${now.toISOString()}\n\n`, "utf8");
+
+  function log(msg: string): void {
+    fs.appendFileSync(logPath, msg + "\n", "utf8");
+  }
+
+  return { logPath, log };
+}
+
+export function cleanupOldLogs(): void {
+  const cutoff = Date.now() - LOG_RETENTION_MS;
+  let deleted  = 0;
+
+  // Clean up orchestration logs older than 7 days
+  if (fs.existsSync(ORCH_LOGS_PATH)) {
+    for (const file of fs.readdirSync(ORCH_LOGS_PATH)) {
+      const filePath = path.join(ORCH_LOGS_PATH, file);
+      const { mtimeMs } = fs.statSync(filePath);
+      if (mtimeMs < cutoff) { fs.unlinkSync(filePath); deleted++; }
+    }
+  }
+
+  // Clean up launchd-err.log if older than 7 days (based on last modified time)
+  if (fs.existsSync(LAUNCHD_ERR_LOG)) {
+    const { mtimeMs } = fs.statSync(LAUNCHD_ERR_LOG);
+    if (mtimeMs < cutoff) { fs.unlinkSync(LAUNCHD_ERR_LOG); deleted++; }
+  }
+
+  if (deleted > 0) {
+    console.log(`🗑   Cleaned up ${deleted} log file(s) older than 7 days.`);
+  }
+}
+
+// ── Per-PR log helpers ────────────────────────────────────────────────────────
 
 export function idToLogFilename(id: string): string {
   // "org/repo#42" → "org-repo-42.log"
@@ -46,25 +91,13 @@ export function writeReviewLog(id: string, content: string): string {
   if (!fs.existsSync(PR_LOGS_PATH)) fs.mkdirSync(PR_LOGS_PATH, { recursive: true });
   const logPath = logPathForId(id);
   fs.writeFileSync(logPath, content, "utf8");
-  return path.relative(path.join(__dirname, ".."), logPath); // relative path for storage
+  return path.relative(path.join(__dirname, ".."), logPath);
 }
 
-export function deleteReviewLog(id: string): void {
-  const logPath = logPathForId(id);
+export function deleteReviewLog(review: { logFile?: string }): void {
+  if (!review.logFile) return;
+  const logPath = path.join(__dirname, "..", review.logFile);
   if (fs.existsSync(logPath)) fs.unlinkSync(logPath);
-}
-
-// ── Log rotation ──────────────────────────────────────────────────────────────
-
-const MAX_LOG_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
-
-export function rotateLogIfNeeded(logPath: string): void {
-  if (!fs.existsSync(logPath)) return;
-  const { size } = fs.statSync(logPath);
-  if (size < MAX_LOG_SIZE_BYTES) return;
-  const rotated = logPath.replace(/\.log$/, `.${Date.now()}.log`);
-  fs.renameSync(logPath, rotated);
-  console.log(`📦  Rotated ${path.basename(logPath)} (was ${(size / 1024 / 1024).toFixed(1)}MB)`);
 }
 
 // ── Review storage ────────────────────────────────────────────────────────────
