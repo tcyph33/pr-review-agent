@@ -181,16 +181,12 @@ async function main(): Promise<void> {
   }
 
   // ── Step 3: review each PR via Claude Code ───────────────────────────────────
-  // Note: reviews run sequentially, not in parallel, because each Claude Code
-  // invocation clones a repo and runs gh commands — parallel runs risk git/gh
-  // conflicts and excessive disk usage.
-  console.log(`\n📋  Reviewing ${prs.length} PR(s) via Claude Code...\n`);
+  // Each Claude Code invocation clones to a unique directory (~/PR-Reviews/<repo>-<number>)
+  // so parallel runs are safe — no shared state or filesystem conflicts.
+  console.log(`\n📋  Reviewing ${prs.length} PR(s) in parallel via Claude Code...\n`);
 
-  const successful: PRReview[] = [];
-  for (const pr of prs) {
-    const result = await reviewPR(pr, skill, username);
-    if (result) successful.push(result);
-  }
+  const results    = await Promise.all(prs.map((pr) => reviewPR(pr, skill, username)));
+  const successful = results.filter((r): r is PRReview => r !== null);
 
   console.log(`\n✅  Completed ${successful.length}/${prs.length} reviews.`);
 
