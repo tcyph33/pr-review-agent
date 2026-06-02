@@ -30,12 +30,12 @@ import { notify, notifyFailure, buildNotificationSummary } from "./lib/notify.ts
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const GITHUB_TOKEN     = process.env.GITHUB_TOKEN;
+const GITHUB_API_TOKEN     = process.env.GITHUB_API_TOKEN;
 const REVIEW_SKILL_URL = process.env.REVIEW_SKILL_URL;
 
 const missing = (
   [
-    ["GITHUB_TOKEN",      GITHUB_TOKEN],
+    ["GITHUB_API_TOKEN",      GITHUB_API_TOKEN],
     ["REVIEW_SKILL_URL",  REVIEW_SKILL_URL],
   ] as [string, string | undefined][]
 )
@@ -49,7 +49,7 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
-const githubToken    = GITHUB_TOKEN!;
+const githubToken    = GITHUB_API_TOKEN!;
 const reviewSkillUrl = REVIEW_SKILL_URL!;
 
 // ── Clients ───────────────────────────────────────────────────────────────────

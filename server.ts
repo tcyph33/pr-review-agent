@@ -14,7 +14,7 @@ const DASHBOARD_PATH = path.join(__dirname, "dashboard");
 const LOGS_PATH      = path.join(__dirname, "logs");
 const PORT           = 3000;
 
-const GITHUB_TOKEN     = process.env.GITHUB_TOKEN;
+const GITHUB_API_TOKEN     = process.env.GITHUB_API_TOKEN;
 const REVIEW_SKILL_URL = process.env.REVIEW_SKILL_URL;
 
 const MIME: Record<string, string> = {
@@ -70,12 +70,12 @@ function deleteLogFile(review: Review): void {
 // ── Claude Code launcher ──────────────────────────────────────────────────────
 
 async function fetchSkill(): Promise<string> {
-  if (!REVIEW_SKILL_URL || !GITHUB_TOKEN) {
-    throw new Error("REVIEW_SKILL_URL and GITHUB_TOKEN must be set in environment");
+  if (!REVIEW_SKILL_URL || !GITHUB_API_TOKEN) {
+    throw new Error("REVIEW_SKILL_URL and GITHUB_API_TOKEN must be set in environment");
   }
   const res = await fetch(REVIEW_SKILL_URL, {
     headers: {
-      Authorization: `token ${GITHUB_TOKEN}`,
+      Authorization: `token ${GITHUB_API_TOKEN}`,
       Accept: "application/vnd.github.raw",
     },
   });
