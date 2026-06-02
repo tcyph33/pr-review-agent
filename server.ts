@@ -12,10 +12,9 @@ import { fileURLToPath } from "url";
 const __dirname      = path.dirname(fileURLToPath(import.meta.url));
 const RESULTS_PATH   = path.join(__dirname, "results", "reviews.json");
 const DASHBOARD_PATH = path.join(__dirname, "dashboard");
-const LOGS_PATH      = path.join(__dirname, "logs");
 const PORT           = 3000;
 
-const GITHUB_API_TOKEN        = process.env.GITHUB_API_TOKEN;
+const GITHUB_API_TOKEN = process.env.GITHUB_API_TOKEN;
 const REVIEW_SKILL_URL = process.env.REVIEW_SKILL_URL;
 
 const MIME: Record<string, string> = {
@@ -55,7 +54,10 @@ function readReviews(): Review[] {
 }
 
 function writeReviews(reviews: Review[]): void {
-  fs.writeFileSync(RESULTS_PATH, JSON.stringify(reviews, null, 2));
+  // Atomic write — write to temp file then rename to prevent corruption on kill/crash
+  const tmp = RESULTS_PATH + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(reviews, null, 2));
+  fs.renameSync(tmp, RESULTS_PATH);
 }
 
 function findReview(id: string): Review | null {
@@ -111,8 +113,9 @@ async function launchClaudeCode(review: Review): Promise<void> {
 
   const skill       = await fetchSkill();
   const message     = buildClaudeMessage(review);
+  const reviewSlug  = review.id.replace(/[^a-zA-Z0-9]/g, "-");
   const skillPath   = path.join(os.tmpdir(), "pr-review-skill.md");
-  const messagePath = path.join(os.tmpdir(), "pr-review-message.txt");
+  const messagePath = path.join(os.tmpdir(), `pr-review-message-${reviewSlug}.txt`);
 
   fs.writeFileSync(skillPath, skill, "utf8");
   fs.writeFileSync(messagePath, message, "utf8");
@@ -121,6 +124,9 @@ async function launchClaudeCode(review: Review): Promise<void> {
   execSync(
     `osascript -e 'tell application "Terminal" to do script "${command.replace(/"/g, '\\"')}"'`
   );
+
+  // Clean up temp message file after launch (skill file is shared and will be overwritten)
+  try { fs.unlinkSync(messagePath); } catch { /* best effort */ }
 }
 
 // ── Request handler ───────────────────────────────────────────────────────────
@@ -187,9 +193,9 @@ const server = http.createServer(async (req, res) => {
 
   // ── DELETE /api/reviews/:id ───────────────────────────────────────────────
   if (req.method === "DELETE" && url.pathname.startsWith("/api/reviews/")) {
-    const id      = decodeURIComponent(url.pathname.replace("/api/reviews/", ""));
-    const reviews = readReviews();
-    const target  = reviews.find((r) => r.id === id);
+    const id       = decodeURIComponent(url.pathname.replace("/api/reviews/", ""));
+    const reviews  = readReviews();
+    const target   = reviews.find((r) => r.id === id);
     const filtered = reviews.filter((r) => r.id !== id);
 
     if (filtered.length === reviews.length) {

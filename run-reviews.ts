@@ -161,8 +161,12 @@ function runWithClaudeCode(
   logPath: string,
   orchLog: (msg: string) => void
 ): string {
+  // Skill file is identical for all PRs — safe to share across parallel agents
+  // Message file is unique per PR to avoid parallel agents overwriting each other
+  const prMatch     = prUrl.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
+  const prSlug      = prMatch ? `${prMatch[1]}-${prMatch[2]}-${prMatch[3]}` : Date.now().toString();
   const skillPath   = path.join(os.tmpdir(), "pr-review-skill.md");
-  const messagePath = path.join(os.tmpdir(), "pr-review-message.txt");
+  const messagePath = path.join(os.tmpdir(), `pr-review-message-${prSlug}.txt`);
   fs.writeFileSync(skillPath, skill, "utf8");
   fs.writeFileSync(messagePath, `Please review this PR: ${prUrl}`, "utf8");
 
@@ -184,11 +188,13 @@ function runWithClaudeCode(
     const result = output.trim();
     fs.appendFileSync(logPath, result + `\n\n=== Completed: ${new Date().toISOString()}\n`);
     orchLog(`  ✅  Completed: ${prUrl}`);
+    try { fs.unlinkSync(messagePath); } catch { /* best effort */ }
     return result;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     fs.appendFileSync(logPath, `\n=== FAILED: ${new Date().toISOString()}\n${message}\n`);
     orchLog(`  ❌  Failed: ${prUrl} — ${message}`);
+    try { fs.unlinkSync(messagePath); } catch { /* best effort */ }
     throw new Error(`Claude Code failed: ${message}`);
   }
 }
