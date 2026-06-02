@@ -1,7 +1,7 @@
 #!/usr/bin/env npx tsx
 
 import "dotenv/config";
-import { execSync, execFileSync } from "child_process";
+import { execFileSync, spawn } from "child_process";
 import https from "https";
 import os from "os";
 import fs from "fs";
@@ -155,12 +155,12 @@ async function fetchSkillWithRetry(
 
 // ── Claude Code runner ────────────────────────────────────────────────────────
 
-function runWithClaudeCode(
+async function runWithClaudeCode(
   skill: string,
   prUrl: string,
   logPath: string,
   orchLog: (msg: string) => void
-): string {
+): Promise<string> {
   // Skill file is identical for all PRs — safe to share across parallel agents
   // Message file is unique per PR to avoid parallel agents overwriting each other
   const prMatch     = prUrl.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
@@ -176,27 +176,58 @@ function runWithClaudeCode(
   }
   fs.writeFileSync(logPath, header, "utf8");
 
-  try {
-    const output = execSync(
-      `claude --print --system-prompt "$(cat '${skillPath}')" "$(cat '${messagePath}')"`,
-      {
-        encoding: "utf8",
-        timeout: 30 * 60 * 1000,     // 30 minute timeout per PR
-        maxBuffer: 10 * 1024 * 1024, // 10MB output buffer
+  return new Promise<string>((resolve, reject) => {
+    const proc = spawn("bash", [
+      "-c",
+      `claude --print --system-prompt "$(cat '${skillPath}')" "$(cat '${messagePath}')"`
+    ], { encoding: "utf8" });
+
+    const chunks: string[] = [];
+    const errChunks: string[] = [];
+    let timedOut = false;
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      proc.kill("SIGTERM");
+    }, 30 * 60 * 1000); // 30 minute timeout per PR
+
+    proc.stdout.on("data", (d: string) => chunks.push(d));
+    proc.stderr.on("data", (d: string) => errChunks.push(d));
+
+    proc.on("close", (code: number | null) => {
+      clearTimeout(timer);
+      try { fs.unlinkSync(messagePath); } catch { /* best effort */ }
+
+      if (timedOut) {
+        const msg = `Timed out after 30 minutes`;
+        fs.appendFileSync(logPath, `\n=== FAILED: ${new Date().toISOString()}\n${msg}\n`);
+        orchLog(`  ❌  Timed out: ${prUrl}`);
+        reject(new Error(`Claude Code timed out: ${msg}`));
+        return;
       }
-    );
-    const result = output.trim();
-    fs.appendFileSync(logPath, result + `\n\n=== Completed: ${new Date().toISOString()}\n`);
-    orchLog(`  ✅  Completed: ${prUrl}`);
-    try { fs.unlinkSync(messagePath); } catch { /* best effort */ }
-    return result;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    fs.appendFileSync(logPath, `\n=== FAILED: ${new Date().toISOString()}\n${message}\n`);
-    orchLog(`  ❌  Failed: ${prUrl} — ${message}`);
-    try { fs.unlinkSync(messagePath); } catch { /* best effort */ }
-    throw new Error(`Claude Code failed: ${message}`);
-  }
+
+      if (code !== 0) {
+        const msg = errChunks.join("").trim() || `exited with code ${code}`;
+        fs.appendFileSync(logPath, `\n=== FAILED: ${new Date().toISOString()}\n${msg}\n`);
+        orchLog(`  ❌  Failed: ${prUrl} — ${msg}`);
+        reject(new Error(`Claude Code failed: ${msg}`));
+        return;
+      }
+
+      const result = chunks.join("").trim();
+      fs.appendFileSync(logPath, result + `\n\n=== Completed: ${new Date().toISOString()}\n`);
+      orchLog(`  ✅  Completed: ${prUrl}`);
+      resolve(result);
+    });
+
+    proc.on("error", (err: Error) => {
+      clearTimeout(timer);
+      try { fs.unlinkSync(messagePath); } catch { /* best effort */ }
+      fs.appendFileSync(logPath, `\n=== FAILED: ${new Date().toISOString()}\n${err.message}\n`);
+      orchLog(`  ❌  Failed: ${prUrl} — ${err.message}`);
+      reject(new Error(`Claude Code failed: ${err.message}`));
+    });
+  });
 }
 
 // ── Per-PR review ─────────────────────────────────────────────────────────────
@@ -244,7 +275,7 @@ async function reviewPR(
       getMyReviewState(octokit, owner, repo, pullNumber, username),
     ]);
 
-    const feedback = runWithClaudeCode(skill, pr.html_url, logPath, orchLog);
+    const feedback = await runWithClaudeCode(skill, pr.html_url, logPath, orchLog);
     console.log(`  ✅  PR #${pullNumber} review complete.`);
 
     return {
