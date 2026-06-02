@@ -163,6 +163,7 @@
     .badge-del    { background: #2a1a1a; color: #f85149; }
     .badge-time   { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
     .badge-failed { background: #3d1c1c; color: #f85149; border: 1px solid #6e2020; }
+    .badge-waiting         { background: #1a2035; color: #79c0ff; border: 1px solid #1a3a6e; }
     .badge-state-pending   { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
     .badge-state-commented { background: #1f2d3d; color: #58a6ff; border: 1px solid #1f4070; }
     .badge-state-changes   { background: #2a1a0a; color: #e3b341; border: 1px solid #5a3800; }
@@ -339,6 +340,8 @@
     <option value="age-desc">Oldest PR first</option>
     <option value="age-asc">Newest PR first</option>
     <option value="repo-asc">Repo (A–Z)</option>
+    <option value="waiting-desc">Waiting longest</option>
+    <option value="waiting-asc">Waiting shortest</option>
   </select>
   <div class="controls-divider"></div>
   <span class="controls-label">Repo:</span>
@@ -395,6 +398,11 @@
     return Math.floor((Date.now() - created.getTime()) / 86400000);
   }
 
+  function waitingDays(r) {
+    if (!r.reviewRequestedAt) return null;
+    return Math.floor((Date.now() - new Date(r.reviewRequestedAt).getTime()) / 86400000);
+  }
+
   function renderSummary() {
     const bar    = document.getElementById("summary-bar");
     const open   = reviews.filter(r => !r.prStatus || r.prStatus === "open");
@@ -437,6 +445,19 @@
       if (sort === "age-desc")      return prAgeDays(b) - prAgeDays(a);
       if (sort === "age-asc")       return prAgeDays(a) - prAgeDays(b);
       if (sort === "repo-asc")      return a.repo.localeCompare(b.repo);
+      // Nulls sort last for waiting
+      if (sort === "waiting-desc")  {
+        if (!a.reviewRequestedAt && !b.reviewRequestedAt) return 0;
+        if (!a.reviewRequestedAt) return 1;
+        if (!b.reviewRequestedAt) return -1;
+        return new Date(a.reviewRequestedAt).getTime() - new Date(b.reviewRequestedAt).getTime();
+      }
+      if (sort === "waiting-asc")   {
+        if (!a.reviewRequestedAt && !b.reviewRequestedAt) return 0;
+        if (!a.reviewRequestedAt) return 1;
+        if (!b.reviewRequestedAt) return -1;
+        return new Date(b.reviewRequestedAt).getTime() - new Date(a.reviewRequestedAt).getTime();
+      }
       return 0;
     });
 
@@ -491,6 +512,7 @@
            <span class="badge badge-add">+${r.additions}</span>
            <span class="badge badge-del">-${r.deletions}</span>
            <span class="badge badge-time">${prAgeDays(r) === 1 ? '1 day old' : prAgeDays(r) + ' days old'}</span>
+           ${waitingDays(r) !== null ? `<span class="badge badge-waiting">⏳ Waiting ${waitingDays(r) === 1 ? '1 day' : waitingDays(r) + ' days'}</span>` : ''}
            ${reviewStateBadge(r.reviewState || "PENDING")}
            ${prStatusBadge(r.prStatus)}`;
 

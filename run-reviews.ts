@@ -13,6 +13,7 @@ import {
   getPRDetails,
   getPRFiles,
   getMyReviewState,
+  getReviewRequestedAt,
   refreshPRStatuses,
 } from "./lib/github.ts";
 import type { SearchPRItem, RepoConfig } from "./lib/github.ts";
@@ -260,7 +261,7 @@ async function reviewPR(
       repo: "unknown", pull_number: pr.number, author: "unknown", branch: "",
       filesChanged: 0, additions: 0, deletions: 0, feedback: "",
       reviewState: "PENDING", reviewStatus: "failed", prStatus: "open",
-      prCreatedAt: new Date().toISOString(), reviewedAt: new Date().toISOString(), logFile,
+      prCreatedAt: new Date().toISOString(), reviewRequestedAt: null, reviewedAt: new Date().toISOString(), logFile,
     };
   }
 
@@ -276,10 +277,11 @@ async function reviewPR(
   console.log(`  🤖  Reviewing PR #${pullNumber} in ${owner}/${repo}: "${pr.title}"`);
 
   try {
-    const [files, details, reviewState] = await Promise.all([
+    const [files, details, reviewState, reviewRequestedAt] = await Promise.all([
       getPRFiles(octokit, owner, repo, pullNumber),
       getPRDetails(octokit, owner, repo, pullNumber),
       getMyReviewState(octokit, owner, repo, pullNumber, username),
+      getReviewRequestedAt(octokit, owner, repo, pullNumber, username),
     ]);
 
     const feedback = await runWithClaudeCode(skill, pr.html_url, logPath, orchLog);
@@ -320,7 +322,7 @@ async function reviewPR(
       repo: `${owner}/${repo}`, pull_number: pullNumber,
       author, branch, filesChanged, additions, deletions,
       feedback: "", reviewState: "PENDING", reviewStatus: "failed", prStatus: "open",
-      prCreatedAt, reviewedAt: new Date().toISOString(), logFile,
+      prCreatedAt, reviewRequestedAt: null, reviewedAt: new Date().toISOString(), logFile,
     };
   }
 }

@@ -94,6 +94,26 @@ export async function getPRFiles(
   return data;
 }
 
+export async function getReviewRequestedAt(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  pull_number: number,
+  username: string
+): Promise<string | null> {
+  try {
+    const { data } = await octokit.rest.pulls.listRequestedReviewers({
+      owner, repo, pull_number,
+    });
+    const reviewer = data.users.find((u) => u.login === username);
+    // GitHub returns requested_at on the reviewer object when available
+    const requestedAt = (reviewer as unknown as { requested_at?: string })?.requested_at;
+    return requestedAt ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function getMyReviewState(
   octokit: Octokit,
   owner: string,

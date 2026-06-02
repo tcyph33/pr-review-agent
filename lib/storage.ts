@@ -30,6 +30,7 @@ export interface PRReview {
   reviewStatus: ReviewStatus;
   prStatus: PRStatus;
   prCreatedAt: string;
+  reviewRequestedAt: string | null;
   reviewedAt: string;
   logFile: string; // relative path: logs/reviews/<id>.log
 }
