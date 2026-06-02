@@ -40,15 +40,47 @@ export async function getAuthenticatedUsername(octokit: Octokit): Promise<string
   return data.login;
 }
 
+export interface RepoConfig {
+  reviewRequestedRepos: string[]; // repos to watch for review-requested
+  assigneeRepos: string[];        // repos to watch for assignee
+}
+
 export async function getPRsNeedingReview(
   octokit: Octokit,
-  username: string
+  username: string,
+  config: RepoConfig
 ): Promise<SearchPRItem[]> {
-  const { data } = await octokit.rest.search.issuesAndPullRequests({
-    q: `is:pr is:open review-requested:${username}`,
-    per_page: 50,
-  });
-  return data.items;
+  const { reviewRequestedRepos, assigneeRepos } = config;
+
+  if (reviewRequestedRepos.length === 0 && assigneeRepos.length === 0) {
+    throw new Error(
+      "No repos configured. Set REVIEW_REQUESTED_REPOS and/or REVIEW_ASSIGNEE_REPOS in your environment."
+    );
+  }
+
+  const results = new Map<number, SearchPRItem>();
+
+  // Query 1: review-requested on REVIEW_REQUESTED_REPOS
+  if (reviewRequestedRepos.length > 0) {
+    const repoFilters = reviewRequestedRepos.map(r => `repo:${r}`).join(" ");
+    const { data } = await octokit.rest.search.issuesAndPullRequests({
+      q: `is:pr is:open review-requested:${username} ${repoFilters}`,
+      per_page: 50,
+    });
+    for (const item of data.items) results.set(item.id, item);
+  }
+
+  // Query 2: assignee on REVIEW_ASSIGNEE_REPOS
+  if (assigneeRepos.length > 0) {
+    const repoFilters = assigneeRepos.map(r => `repo:${r}`).join(" ");
+    const { data } = await octokit.rest.search.issuesAndPullRequests({
+      q: `is:pr is:open assignee:${username} ${repoFilters}`,
+      per_page: 50,
+    });
+    for (const item of data.items) results.set(item.id, item);
+  }
+
+  return Array.from(results.values());
 }
 
 export async function getPRDetails(

@@ -15,7 +15,7 @@ import {
   getMyReviewState,
   refreshPRStatuses,
 } from "./lib/github.ts";
-import type { SearchPRItem } from "./lib/github.ts";
+import type { SearchPRItem, RepoConfig } from "./lib/github.ts";
 import {
   loadReviews,
   saveReviews,
@@ -31,12 +31,14 @@ import { notify, notifyFailure, buildNotificationSummary } from "./lib/notify.ts
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const GITHUB_API_TOKEN     = process.env.GITHUB_API_TOKEN;
-const REVIEW_SKILL_URL = process.env.REVIEW_SKILL_URL;
+const GITHUB_API_TOKEN        = process.env.GITHUB_API_TOKEN;
+const REVIEW_SKILL_URL        = process.env.REVIEW_SKILL_URL;
+const REVIEW_REQUESTED_REPOS  = process.env.REVIEW_REQUESTED_REPOS ?? "";
+const REVIEW_ASSIGNEE_REPOS   = process.env.REVIEW_ASSIGNEE_REPOS ?? "";
 
 const missing = (
   [
-    ["GITHUB_API_TOKEN",      GITHUB_API_TOKEN],
+    ["GITHUB_API_TOKEN",  GITHUB_API_TOKEN],
     ["REVIEW_SKILL_URL",  REVIEW_SKILL_URL],
   ] as [string, string | undefined][]
 )
@@ -320,6 +322,13 @@ async function main(): Promise<void> {
   const username = await getAuthenticatedUsername(octokit);
   tee(`👤  Authenticated as ${username}`);
 
+  const repoConfig = {
+    reviewRequestedRepos: REVIEW_REQUESTED_REPOS.split(",").map(r => r.trim()).filter(Boolean),
+    assigneeRepos: REVIEW_ASSIGNEE_REPOS.split(",").map(r => r.trim()).filter(Boolean),
+  };
+  tee(`📦  Review-requested repos: ${repoConfig.reviewRequestedRepos.join(", ") || "none"}`);
+  tee(`📦  Assignee repos: ${repoConfig.assigneeRepos.join(", ") || "none"}`);
+
   // ── Step 1: refresh status of all existing reviews ────────────────────────
   const existing = loadReviews();
   if (existing.length > 0) {
@@ -333,7 +342,7 @@ async function main(): Promise<void> {
 
   // ── Step 2: find PRs needing review ───────────────────────────────────────
   tee(`\n🔍  Searching for PRs requesting review from ${username}...`);
-  const prs = await getPRsNeedingReview(octokit, username);
+  const prs = await getPRsNeedingReview(octokit, username, repoConfig);
   tee(`    Found ${prs.length} PR(s) needing review.`);
 
   if (prs.length === 0) {
