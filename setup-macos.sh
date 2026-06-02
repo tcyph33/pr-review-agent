@@ -127,6 +127,8 @@ cat > ~/Library/LaunchAgents/com.pr-review-agent.plist << PLIST
   <dict>
     <key>PATH</key>
     <string>$LAUNCHD_PATH</string>
+    <key>NODE_USE_SYSTEM_CA</key>
+    <string>1</string>
   </dict>
   <key>WorkingDirectory</key>
   <string>$REPO_PATH</string>
@@ -171,6 +173,8 @@ cat > ~/Library/LaunchAgents/com.pr-review-dashboard.plist << PLIST
   <dict>
     <key>PATH</key>
     <string>$LAUNCHD_PATH</string>
+    <key>NODE_USE_SYSTEM_CA</key>
+    <string>1</string>
   </dict>
   <key>WorkingDirectory</key>
   <string>$REPO_PATH</string>
