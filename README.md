@@ -97,6 +97,7 @@ If a variable is set in the environment it takes precedence over `.env`.
 | `REVIEW_SKILL_URL` | GitHub API URL to your `code-review` skill `.md` file |
 | `REVIEW_REQUESTED_REPOS` | Comma-separated list of `owner/repo` to watch for review-requested |
 | `REVIEW_ASSIGNEE_REPOS` | Comma-separated list of `owner/repo` to watch for assignee. A repo can appear in both lists. |
+| `REVIEW_SKILL_COMMAND` | Claude Code slash command for the review skill. Defaults to `/code-review`. Only set if your skill uses a different name. |
 
 ### 3. Authenticate GitHub CLI
 
