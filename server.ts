@@ -99,12 +99,18 @@ async function fetchSkill(): Promise<string> {
 }
 
 function buildClaudeMessage(review: Review): string {
+  const repoName = review.repo.split("/")[1];
+  const cloneDir = `~/PR-Reviews/${repoName}-${review.pull_number}`;
   return [
-    `Please review this PR: ${review.url}`,
+    `The automated review agent has already reviewed this PR: ${review.url}`,
     ``,
-    `The automated review agent already reviewed this PR. Here is its prior feedback for additional context — use it to inform your review and our discussion:`,
+    `The cloned repo is at ${cloneDir} — do NOT clone it again, use the existing clone for any investigation.`,
+    ``,
+    `Prior agent feedback:`,
     ``,
     review.feedback,
+    ``,
+    `The review is complete. Use the cloned repo to answer follow-up questions about the code and review findings.`,
   ].join("\n");
 }
 
