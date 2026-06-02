@@ -871,13 +871,17 @@
     if (e.target === document.getElementById('commits-modal')) closeCommitsModal();
   });
 
+  let firstLoad = true;
+
   async function loadReviews(callRefresh = false) {
     document.getElementById("error-banner").style.display = "none";
-    if (callRefresh) {
+    if (callRefresh && firstLoad) {
       document.getElementById("loading-screen").style.display = "";
       document.getElementById("summary-bar").style.display = "none";
       document.getElementById("cards").style.display = "none";
       document.getElementById("controls-bar").style.display = "none";
+    }
+    if (callRefresh) {
       try { await fetch('/api/refresh', { method: 'POST' }); } catch { /* best effort */ }
     }
     try {
@@ -889,12 +893,17 @@
         ...raw.filter(r => !r.prStatus || r.prStatus === "open"),
         ...raw.filter(r => r.prStatus && r.prStatus !== "open"),
       ];
-      document.getElementById("loading-screen").style.display = "none";
-      document.getElementById("summary-bar").style.display = "";
-      document.getElementById("cards").style.display = "";
+      if (firstLoad) {
+        document.getElementById("loading-screen").style.display = "none";
+        document.getElementById("summary-bar").style.display = "";
+        document.getElementById("cards").style.display = "";
+      }
+      firstLoad = false;
+      const scrollY = window.scrollY;
       populateRepoFilter();
       applyControls();
       renderSummary();
+      window.scrollTo(0, scrollY);
       document.getElementById("refreshed-at").textContent =
         "Last refreshed: " + new Date().toLocaleTimeString();
     } catch (err) {
