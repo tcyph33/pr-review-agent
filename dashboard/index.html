@@ -203,63 +203,71 @@
     .feedback::-webkit-scrollbar-track { background: transparent; }
     .feedback::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
 
-    /* Commit popover */
-    .commits-popover {
-      position: absolute;
-      top: calc(100% + 6px);
-      right: 0;
-      background: #1c2128;
-      border: 1px solid #30363d;
-      border-radius: 8px;
-      padding: 10px 0;
-      min-width: 360px;
-      max-width: 480px;
-      z-index: 50;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    /* Commit modal */
+    .commits-modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
     }
 
-    .commits-popover-header {
+    .commits-modal-overlay.visible { display: flex; }
+
+    .commits-modal {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 10px;
+      width: 100%;
+      max-width: 540px;
+      max-height: 70vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .commits-modal-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 4px 14px 10px;
-      border-bottom: 1px solid #30363d;
-      margin-bottom: 4px;
+      padding: 14px 18px;
+      border-bottom: 1px solid #21262d;
+      flex-shrink: 0;
     }
 
-    .commits-popover-title { font-size: 0.78rem; font-weight: 600; color: #c9d1d9; }
+    .commits-modal-title { font-size: 0.9rem; font-weight: 600; color: #f0f6fc; }
+    .commits-modal-close { background: transparent; border: none; color: #8b949e; font-size: 1.2rem; cursor: pointer; padding: 0 4px; line-height: 1; }
+    .commits-modal-close:hover { color: #f0f6fc; opacity: 1; }
+
+    .commits-modal-body {
+      overflow-y: auto;
+      flex: 1;
+      padding: 8px 0;
+    }
 
     .commit-item {
-      padding: 7px 14px;
-      font-size: 0.78rem;
+      padding: 8px 18px;
+      font-size: 0.8rem;
       display: flex;
       gap: 10px;
       align-items: flex-start;
     }
 
-    .commit-item:hover { background: #21262d; }
-
-    .commit-sha   { color: #79c0ff; font-family: monospace; flex-shrink: 0; }
-    .commit-msg   { color: #c9d1d9; flex: 1; word-break: break-word; }
+    .commit-item:hover { background: #1c2128; }
+    .commit-sha    { color: #79c0ff; font-family: monospace; flex-shrink: 0; }
+    .commit-msg    { color: #c9d1d9; flex: 1; word-break: break-word; }
     .commit-author { color: #8b949e; font-size: 0.72rem; flex-shrink: 0; }
 
-    .commit-mark-seen {
-      display: block;
-      width: calc(100% - 28px);
-      margin: 8px 14px 2px;
-      padding: 5px;
-      background: #21262d;
-      border: 1px solid #30363d;
-      border-radius: 6px;
-      color: #8b949e;
-      font-size: 0.75rem;
-      cursor: pointer;
-      text-align: center;
+    .commits-modal-footer {
+      padding: 12px 18px;
+      border-top: 1px solid #21262d;
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-shrink: 0;
     }
-
-    .commit-mark-seen:hover { color: #c9d1d9; border-color: #58a6ff; }
-
-    .card-header { position: relative; }
 
     /* Markdown rendering */
     .feedback h1 { font-size: 1rem; font-weight: 600; color: #f0f6fc; margin: 12px 0 6px; }
@@ -377,7 +385,6 @@
     <div class="meta" id="refreshed-at"></div>
   </div>
   <div class="actions">
-    <button class="btn-ghost" onclick="refreshAndLoad()">↺ Refresh</button>
     <button class="btn-danger" id="btn-clear-all" onclick="confirmClearAll()" style="display:none">Clear All</button>
     <button class="btn-primary" id="btn-open-all" onclick="openAll()" style="display:none">Open All</button>
   </div>
@@ -438,6 +445,21 @@
     </div>
     <div class="modal-body">
       <div class="log-content" id="log-content"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Commits modal -->
+<div class="commits-modal-overlay" id="commits-modal">
+  <div class="commits-modal">
+    <div class="commits-modal-header">
+      <div class="commits-modal-title" id="commits-modal-title">New Commits</div>
+      <button class="commits-modal-close" onclick="closeCommitsModal()">✕</button>
+    </div>
+    <div class="commits-modal-body" id="commits-modal-body"></div>
+    <div class="commits-modal-footer">
+      <button class="btn-ghost" onclick="closeCommitsModal()">Close</button>
+      <button class="btn-secondary" id="commits-mark-seen-btn" onclick="markSeenFromModal()">Mark as seen</button>
     </div>
   </div>
 </div>
@@ -582,7 +604,7 @@
              return `<span class="badge ${cls}">${label}</span>`;
            })()}
            ${reviewStateBadge(r.reviewState || "PENDING")}
-           ${(r.newCommits && r.newCommits.length > 0) ? `<span class="badge badge-commits" data-id="${escHtml(r.id)}" onclick="showCommits('${escHtml(r.id)}', ${JSON.stringify(r.newCommits || [])}, this)">↑ ${r.newCommits.length} new commit${r.newCommits.length !== 1 ? 's' : ''}</span>` : ''}
+           ${(r.newCommits && r.newCommits.length > 0) ? `<span class="badge badge-commits" data-id="${escHtml(r.id)}" onclick="showCommits('${escHtml(r.id)}', ${JSON.stringify(r.newCommits || [])})">↑ ${r.newCommits.length} new commit${r.newCommits.length !== 1 ? 's' : ''}</span>` : ''}
            ${prStatusBadge(r.prStatus)}`;
 
       const cardBody = failed
@@ -798,62 +820,48 @@
     setTimeout(() => { banner.style.display = "none"; }, 5000);
   }
 
-  let activePopover = null;
+  let currentCommitsId = null;
 
-  function closePopovers() {
-    document.querySelectorAll('.commits-popover').forEach(p => p.remove());
-    activePopover = null;
+  function closeCommitsModal() {
+    document.getElementById('commits-modal').classList.remove('visible');
+    currentCommitsId = null;
   }
 
-  document.addEventListener('click', (e) => {
-    if (!e.target.closest('.badge-commits') && !e.target.closest('.commits-popover')) {
-      closePopovers();
-    }
-  });
-
-  async function markSeen(id, btn) {
+  async function markSeenFromModal() {
+    if (!currentCommitsId) return;
     try {
-      await fetch(`/api/reviews/${encodeURIComponent(id)}/mark-seen`, { method: "POST" });
-      closePopovers();
+      await fetch(`/api/reviews/${encodeURIComponent(currentCommitsId)}/mark-seen`, { method: "POST" });
+      closeCommitsModal();
       await loadReviews();
     } catch (err) {
       showError(`Could not mark as seen: ${err.message}`);
     }
   }
 
-  function showCommits(id, commits, btn) {
-    closePopovers();
-    const popover = document.createElement('div');
-    popover.className = 'commits-popover';
-    popover.innerHTML = `
-      <div class="commits-popover-header">
-        <span class="commits-popover-title">${commits.length} new commit${commits.length !== 1 ? 's' : ''} since your last review</span>
+  function showCommits(id, commits) {
+    currentCommitsId = id;
+    document.getElementById('commits-modal-title').textContent =
+      `${commits.length} new commit${commits.length !== 1 ? 's' : ''} since your last review`;
+    document.getElementById('commits-modal-body').innerHTML = commits.map(c => `
+      <div class="commit-item">
+        <span class="commit-sha">${escHtml(c.sha)}</span>
+        <span class="commit-msg">${escHtml(c.message)}</span>
+        <span class="commit-author">${escHtml(c.author)}</span>
       </div>
-      ${commits.map(c => `
-        <div class="commit-item">
-          <span class="commit-sha">${escHtml(c.sha)}</span>
-          <span class="commit-msg">${escHtml(c.message)}</span>
-          <span class="commit-author">${escHtml(c.author)}</span>
-        </div>
-      `).join('')}
-      <button class="commit-mark-seen" data-id="${escHtml(id)}" onclick="markSeen('${escHtml(id)}', this)">Mark as seen</button>
-    `;
-    btn.closest('.card-header').appendChild(popover);
-    activePopover = popover;
+    `).join('');
+    document.getElementById('commits-modal').classList.add('visible');
   }
 
-  async function refreshAndLoad() {
-    const btn = document.querySelector('[onclick="refreshAndLoad()"]');
-    if (btn) { btn.textContent = "↺ Refreshing..."; btn.disabled = true; }
-    try {
-      await fetch('/api/refresh', { method: 'POST' });
-    } catch { /* continue even if refresh fails */ }
-    await loadReviews();
-    if (btn) { btn.textContent = "↺ Refresh"; btn.disabled = false; }
-  }
+  // Close commits modal on overlay click
+  document.getElementById('commits-modal').addEventListener('click', (e) => {
+    if (e.target === document.getElementById('commits-modal')) closeCommitsModal();
+  });
 
-  async function loadReviews() {
+  async function loadReviews(callRefresh = false) {
     document.getElementById("error-banner").style.display = "none";
+    if (callRefresh) {
+      try { await fetch('/api/refresh', { method: 'POST' }); } catch { /* best effort */ }
+    }
     try {
       const res = await fetch("/results/reviews.json?nocache=" + Date.now());
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -875,8 +883,8 @@
     }
   }
 
-  loadReviews();
-  setInterval(loadReviews, 60000);
+  loadReviews(true);
+  setInterval(() => loadReviews(true), 60000);
 </script>
 </body>
 </html>
