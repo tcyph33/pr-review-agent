@@ -6,12 +6,6 @@ import type { RestEndpointMethodTypes } from "@octokit/rest";
 export type ReviewState = "PENDING" | "COMMENTED" | "CHANGES_REQUESTED" | "APPROVED";
 export type PRStatus    = "open" | "merged" | "closed";
 
-export interface ParsedRepo {
-  owner: string;
-  repo: string;
-  pull_number: number;
-}
-
 export type SearchPRItem =
   RestEndpointMethodTypes["search"]["issuesAndPullRequests"]["response"]["data"]["items"][number];
 
@@ -28,12 +22,6 @@ export function createOctokit(token: string): Octokit {
 }
 
 // ── Functions ─────────────────────────────────────────────────────────────────
-
-export function parseRepoFromUrl(url: string): ParsedRepo | null {
-  const match = url.match(/repos\/([^/]+)\/([^/]+)\/pulls\/(\d+)/);
-  if (!match) return null;
-  return { owner: match[1], repo: match[2], pull_number: parseInt(match[3], 10) };
-}
 
 export async function getAuthenticatedUsername(octokit: Octokit): Promise<string> {
   const { data } = await octokit.rest.users.getAuthenticated();

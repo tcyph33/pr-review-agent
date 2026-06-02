@@ -385,9 +385,9 @@
             </div>
             <div class="card-actions">
               ${!failed ? `<a href="${r.url}" target="_blank"><button class="btn-ghost">Open PR ↗</button></a>` : ""}
-              ${!failed ? `<button class="btn-claude" onclick="openInClaude('${escHtml(r.id)}')">⬡ Claude Code</button>` : ""}
-              ${r.logFile ? `<button class="btn-log" onclick="viewLog('${escHtml(r.id)}', '${escHtml(r.title)}')">View Log</button>` : ""}
-              <button class="btn-dismiss" onclick="dismissReview('${escHtml(r.id)}', ${i})">✕ Dismiss</button>
+              ${!failed ? `<button class="btn-claude" data-id="${escHtml(r.id)}" onclick="openInClaude(this)">⬡ Claude Code</button>` : ""}
+              ${r.logFile ? `<button class="btn-log" data-id="${escHtml(r.id)}" data-title="${escHtml(r.title)}" onclick="viewLog(this)">View Log</button>` : ""}
+              <button class="btn-dismiss" data-id="${escHtml(r.id)}" data-idx="${i}" onclick="dismissReview(this)">✕ Dismiss</button>
             </div>
           </div>
           ${cardBody}
@@ -433,19 +433,29 @@
       .replace(/"/g, "&quot;");
   }
 
-  async function openInClaude(id) {
+  async function openInClaude(btn) {
+    const id = btn.getAttribute("data-id");
+    const original = btn.textContent;
+    btn.textContent = "Opening...";
+    btn.disabled = true;
     try {
       const res = await fetch(`/api/open-in-claude/${encodeURIComponent(id)}`);
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || `HTTP ${res.status}`);
       }
+      btn.textContent = "✓ Opened";
+      setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 2000);
     } catch (err) {
+      btn.textContent = original;
+      btn.disabled = false;
       showError(`Could not open in Claude Code: ${err.message}`);
     }
   }
 
-  async function viewLog(id, title) {
+  async function viewLog(btn) {
+    const id    = btn.getAttribute("data-id");
+    const title = btn.getAttribute("data-title");
     const modal = document.getElementById("log-modal");
     const content = document.getElementById("log-content");
     document.getElementById("log-modal-title").textContent = `Log — ${title}`;
@@ -467,7 +477,9 @@
     document.getElementById("log-modal").classList.remove("visible");
   }
 
-  async function dismissReview(id, i) {
+  async function dismissReview(btn) {
+    const id   = btn.getAttribute("data-id");
+    const i    = btn.getAttribute("data-idx");
     const card = document.getElementById(`card-${i}`);
     card.classList.add("removing");
     try {
