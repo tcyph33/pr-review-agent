@@ -760,6 +760,7 @@
     const id    = btn.getAttribute("data-id");
     const title = btn.getAttribute("data-title");
     const modal = document.getElementById("log-modal");
+    document.body.style.overflow = 'hidden';
     const content = document.getElementById("log-content");
     document.getElementById("log-modal-title").textContent = `Log — ${title}`;
     content.innerHTML = '<span class="log-loading">Loading log...</span>';
@@ -778,6 +779,7 @@
   function closeLogModal(e) {
     if (e && e.target !== document.getElementById("log-modal")) return;
     document.getElementById("log-modal").classList.remove("visible");
+    document.body.style.overflow = '';
   }
 
   async function dismissReview(btn) {
@@ -828,6 +830,7 @@
 
   function closeCommitsModal() {
     document.getElementById('commits-modal').classList.remove('visible');
+    document.body.style.overflow = '';
     currentCommitsId = null;
   }
 
@@ -850,6 +853,7 @@
 
   function showCommits(id, commits) {
     currentCommitsId = id;
+    document.body.style.overflow = 'hidden';
     document.getElementById('commits-modal-title').textContent =
       `${commits.length} new commit${commits.length !== 1 ? 's' : ''} since your last review`;
     document.getElementById('commits-modal-body').innerHTML = commits.map(c => `
