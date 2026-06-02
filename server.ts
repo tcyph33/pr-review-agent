@@ -122,12 +122,25 @@ async function launchClaudeCode(review: Review): Promise<void> {
   fs.writeFileSync(skillPath, skill, "utf8");
   fs.writeFileSync(messagePath, message, "utf8");
 
-  const command = `claude --system-prompt "$(cat '${skillPath}')" "$(cat '${messagePath}')"`;
-  execSync(
-    `osascript -e 'tell application "Terminal" to do script "${command.replace(/"/g, '\\"')}"'`
-  );
+  // Open in the cloned repo dir — falls back to ~/PR-Reviews if clone doesn't exist
+  const repoName = review.repo.split("/")[1];
+  const cloneDir = `~/PR-Reviews/${repoName}-${review.pull_number}`;
+  const cdCmd    = `[ -d ${cloneDir} ] && cd ${cloneDir} || cd ~/PR-Reviews`;
+  const claudeCmd = `claude --system-prompt "$(cat '${skillPath}')" "$(cat '${messagePath}')"`;
+  const fullCmd  = `${cdCmd} && ${claudeCmd}`;
+  const prLabel  = `#${review.pull_number} ${review.title}`.slice(0, 60).replace(/"/g, "'");
 
-  // Clean up temp message file after launch (skill file is shared and will be overwritten)
+  const script = [
+    `tell application "Terminal"`,
+    `  do script "${fullCmd.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`,
+    `  activate`,
+    `end tell`,
+    `display notification "${prLabel} — opened in Terminal" with title "Claude Code" subtitle "Click to switch to Terminal"`,
+  ].join("\n");
+
+  execSync(`osascript << 'APPLESCRIPT'\n${script}\nAPPLESCRIPT`);
+
+  // Clean up temp message file after launch
   try { fs.unlinkSync(messagePath); } catch { /* best effort */ }
 }
 
