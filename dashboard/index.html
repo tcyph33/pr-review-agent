@@ -400,7 +400,11 @@
   </div>
 </div>
 
-<div class="summary-bar" id="summary-bar"></div>
+<div id="loading-screen" style="text-align:center;padding:80px 24px;color:#8b949e;">
+  <div style="font-size:1.1rem;color:#c9d1d9;margin-bottom:8px;">Loading reviews...</div>
+  <div style="font-size:0.85rem;">Fetching latest status from GitHub</div>
+</div>
+<div class="summary-bar" id="summary-bar" style="display:none"></div>
 
 <div class="controls-bar" id="controls-bar" style="display:none">
   <span class="controls-label">Sort:</span>
@@ -434,7 +438,7 @@
   </select>
 </div>
 
-<div class="cards" id="cards"></div>
+<div class="cards" id="cards" style="display:none"></div>
 
 <!-- Log modal -->
 <div class="modal-overlay" id="log-modal" onclick="closeLogModal(event)">
@@ -604,7 +608,7 @@
              return `<span class="badge ${cls}">${label}</span>`;
            })()}
            ${reviewStateBadge(r.reviewState || "PENDING")}
-           ${(r.newCommits && r.newCommits.length > 0) ? `<span class="badge badge-commits" data-id="${escHtml(r.id)}" onclick="showCommits('${escHtml(r.id)}', ${JSON.stringify(r.newCommits || [])})">↑ ${r.newCommits.length} new commit${r.newCommits.length !== 1 ? 's' : ''}</span>` : ''}
+           ${(r.newCommits && r.newCommits.length > 0) ? `<span class="badge badge-commits" data-id="${escHtml(r.id)}" data-commits="${escHtml(JSON.stringify(r.newCommits || []))}" onclick="showCommitsFromBadge(this)">↑ ${r.newCommits.length} new commit${r.newCommits.length !== 1 ? 's' : ''}</span>` : ''}
            ${prStatusBadge(r.prStatus)}`;
 
       const cardBody = failed
@@ -838,6 +842,12 @@
     }
   }
 
+  function showCommitsFromBadge(badge) {
+    const id      = badge.getAttribute('data-id');
+    const commits = JSON.parse(badge.getAttribute('data-commits') || '[]');
+    showCommits(id, commits);
+  }
+
   function showCommits(id, commits) {
     currentCommitsId = id;
     document.getElementById('commits-modal-title').textContent =
@@ -860,6 +870,10 @@
   async function loadReviews(callRefresh = false) {
     document.getElementById("error-banner").style.display = "none";
     if (callRefresh) {
+      document.getElementById("loading-screen").style.display = "";
+      document.getElementById("summary-bar").style.display = "none";
+      document.getElementById("cards").style.display = "none";
+      document.getElementById("controls-bar").style.display = "none";
       try { await fetch('/api/refresh', { method: 'POST' }); } catch { /* best effort */ }
     }
     try {
@@ -871,6 +885,9 @@
         ...raw.filter(r => !r.prStatus || r.prStatus === "open"),
         ...raw.filter(r => r.prStatus && r.prStatus !== "open"),
       ];
+      document.getElementById("loading-screen").style.display = "none";
+      document.getElementById("summary-bar").style.display = "";
+      document.getElementById("cards").style.display = "";
       populateRepoFilter();
       applyControls();
       renderSummary();
