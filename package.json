@@ -5,9 +5,9 @@
   "type": "module",
   "main": "run-reviews.ts",
   "scripts": {
-    "start": "npx tsx run-reviews.ts",
-    "review": "npx tsx run-reviews.ts",
-    "server": "npx tsx server.ts"
+    "start": "NODE_USE_SYSTEM_CA=1 npx tsx run-reviews.ts",
+    "review": "NODE_USE_SYSTEM_CA=1 npx tsx run-reviews.ts",
+    "server": "NODE_USE_SYSTEM_CA=1 npx tsx server.ts"
   },
   "dependencies": {
     "@octokit/rest": "^21.0.0",
