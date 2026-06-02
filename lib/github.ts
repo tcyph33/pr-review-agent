@@ -127,11 +127,11 @@ async function getAssigneeRequestedAt(
     const { data } = await octokit.rest.issues.listEvents({
       owner, repo, issue_number: pull_number, per_page: 100,
     });
-    // Find the most recent assigned event for this user
+    // Find the oldest assigned event for this user — when they were first made responsible
     const assignedEvents = data
       .filter((e) => e.event === "assigned" &&
         (e as unknown as { assignee?: { login: string } }).assignee?.login === username)
-      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
     return assignedEvents[0]?.created_at ?? null;
   } catch {
     return null;

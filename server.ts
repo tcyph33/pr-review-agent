@@ -39,6 +39,8 @@ interface Review {
   reviewStatus: string;
   prStatus: string;
   prCreatedAt: string;
+  reviewRequestedAt: string | null;
+  triggerType: string;
   reviewedAt: string;
   logFile?: string;
 }

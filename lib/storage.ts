@@ -80,22 +80,6 @@ export function cleanupOldLogs(): void {
 
 // ── Per-PR log helpers ────────────────────────────────────────────────────────
 
-export function idToLogFilename(id: string): string {
-  // "org/repo#42" → "org-repo-42.log"
-  return id.replace(/\//g, "-").replace("#", "-") + ".log";
-}
-
-export function logPathForId(id: string): string {
-  return path.join(PR_LOGS_PATH, idToLogFilename(id));
-}
-
-export function writeReviewLog(id: string, content: string): string {
-  if (!fs.existsSync(PR_LOGS_PATH)) fs.mkdirSync(PR_LOGS_PATH, { recursive: true });
-  const logPath = logPathForId(id);
-  fs.writeFileSync(logPath, content, "utf8");
-  return path.relative(path.join(__dirname, ".."), logPath);
-}
-
 export function deleteReviewLog(review: { logFile?: string }): void {
   if (!review.logFile) return;
   const logPath = path.join(__dirname, "..", review.logFile);

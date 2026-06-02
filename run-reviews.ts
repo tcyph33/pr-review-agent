@@ -272,7 +272,7 @@ async function reviewPR(
   const id          = `${owner}/${repo}#${pullNumber}`;
   const logFilename = `${owner}-${repo}-${pullNumber}.log`;
   const logPath     = path.join(PR_LOGS_PATH, logFilename);
-  const logFile     = `logs/reviews/${logFilename}`;
+  const logFile     = `logs/reviews/${logFilename}`; // relative path stored in reviews.json
 
   orchLog(`  🤖  Reviewing PR #${pullNumber} in ${owner}/${repo}: "${pr.title}"`);
   console.log(`  🤖  Reviewing PR #${pullNumber} in ${owner}/${repo}: "${pr.title}"`);
@@ -297,7 +297,7 @@ async function reviewPR(
       additions: files.reduce((s, f) => s + f.additions, 0),
       deletions: files.reduce((s, f) => s + f.deletions, 0),
       feedback, reviewState, reviewStatus: "success", prStatus: "open",
-      prCreatedAt: details.created_at, reviewedAt: new Date().toISOString(), logFile,
+      prCreatedAt: details.created_at, reviewRequestedAt, triggerType, reviewedAt: new Date().toISOString(), logFile,
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
