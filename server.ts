@@ -16,7 +16,6 @@ const LOGS_PATH      = path.join(__dirname, "logs");
 const PORT           = 3000;
 
 const GITHUB_API_TOKEN        = process.env.GITHUB_API_TOKEN;
-const REVIEW_SKILL_COMMAND    = process.env.REVIEW_SKILL_COMMAND ?? "/code-review";
 const REVIEW_SKILL_URL = process.env.REVIEW_SKILL_URL;
 
 const MIME: Record<string, string> = {
@@ -97,7 +96,7 @@ async function fetchSkill(): Promise<string> {
 
 function buildClaudeMessage(review: Review): string {
   return [
-    `${REVIEW_SKILL_COMMAND} ${review.url}`,
+    `Please review this PR: ${review.url}`,
     ``,
     `The automated review agent already reviewed this PR. Here is its prior feedback for additional context — use it to inform your review and our discussion:`,
     ``,

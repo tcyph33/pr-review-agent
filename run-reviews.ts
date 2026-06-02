@@ -35,7 +35,6 @@ const GITHUB_API_TOKEN        = process.env.GITHUB_API_TOKEN;
 const REVIEW_SKILL_URL        = process.env.REVIEW_SKILL_URL;
 const REVIEW_REQUESTED_REPOS  = process.env.REVIEW_REQUESTED_REPOS ?? "";
 const REVIEW_ASSIGNEE_REPOS   = process.env.REVIEW_ASSIGNEE_REPOS ?? "";
-const REVIEW_SKILL_COMMAND    = process.env.REVIEW_SKILL_COMMAND ?? "/code-review";
 
 const missing = (
   [
