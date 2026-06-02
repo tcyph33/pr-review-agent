@@ -68,7 +68,48 @@
     .btn-log       { background: transparent; color: #e3b341; border: 1px solid #5a3800; font-size: 0.72rem; padding: 4px 10px; border-radius: 6px; }
     .btn-log:hover { background: #1a1000; }
 
-    .summary-bar { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+    .controls-bar {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .controls-bar select {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      color: #c9d1d9;
+      font-size: 0.8rem;
+      padding: 5px 10px;
+      cursor: pointer;
+      outline: none;
+    }
+
+    .controls-bar select:hover { border-color: #58a6ff; }
+
+    .controls-label {
+      font-size: 0.75rem;
+      color: #8b949e;
+      white-space: nowrap;
+    }
+
+    .controls-divider {
+      width: 1px;
+      height: 20px;
+      background: #30363d;
+      margin: 0 4px;
+    }
+
+    .pr-number {
+      font-size: 0.78rem;
+      color: #8b949e;
+      font-weight: 400;
+      margin-right: 6px;
+    }
+
+    .summary-bar { display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
 
     .stat {
       background: #161b22;
@@ -290,6 +331,37 @@
 </div>
 
 <div class="summary-bar" id="summary-bar"></div>
+
+<div class="controls-bar" id="controls-bar" style="display:none">
+  <span class="controls-label">Sort:</span>
+  <select id="sort-select" onchange="applyControls()">
+    <option value="reviewed-desc">Recently reviewed</option>
+    <option value="age-desc">Oldest PR first</option>
+    <option value="age-asc">Newest PR first</option>
+    <option value="repo-asc">Repo (A–Z)</option>
+  </select>
+  <div class="controls-divider"></div>
+  <span class="controls-label">Repo:</span>
+  <select id="filter-repo" onchange="applyControls()">
+    <option value="all">All repos</option>
+  </select>
+  <span class="controls-label">State:</span>
+  <select id="filter-state" onchange="applyControls()">
+    <option value="all">All states</option>
+    <option value="PENDING">Pending</option>
+    <option value="COMMENTED">Commented</option>
+    <option value="CHANGES_REQUESTED">Changes requested</option>
+    <option value="APPROVED">Approved</option>
+  </select>
+  <span class="controls-label">Status:</span>
+  <select id="filter-status" onchange="applyControls()">
+    <option value="all">All</option>
+    <option value="open">Open</option>
+    <option value="merged">Merged</option>
+    <option value="closed">Closed</option>
+  </select>
+</div>
+
 <div class="cards" id="cards"></div>
 
 <!-- Log modal -->
@@ -338,12 +410,46 @@
     `;
   }
 
+  let filteredReviews = [];
+
+  function populateRepoFilter() {
+    const select = document.getElementById("filter-repo");
+    const current = select.value;
+    const repos = [...new Set(reviews.map(r => r.repo))].sort();
+    select.innerHTML = '<option value="all">All repos</option>' +
+      repos.map(r => `<option value="${escHtml(r)}">${escHtml(r)}</option>`).join("");
+    if (repos.includes(current)) select.value = current;
+  }
+
+  function applyControls() {
+    const sort   = document.getElementById("sort-select").value;
+    const repo   = document.getElementById("filter-repo").value;
+    const state  = document.getElementById("filter-state").value;
+    const status = document.getElementById("filter-status").value;
+
+    filteredReviews = reviews
+      .filter(r => repo   === "all" || r.repo        === repo)
+      .filter(r => state  === "all" || (r.reviewState || "PENDING") === state)
+      .filter(r => status === "all" || (r.prStatus    || "open")    === status);
+
+    filteredReviews.sort((a, b) => {
+      if (sort === "reviewed-desc") return new Date(b.reviewedAt).getTime() - new Date(a.reviewedAt).getTime();
+      if (sort === "age-desc")      return prAgeDays(b) - prAgeDays(a);
+      if (sort === "age-asc")       return prAgeDays(a) - prAgeDays(b);
+      if (sort === "repo-asc")      return a.repo.localeCompare(b.repo);
+      return 0;
+    });
+
+    renderCards();
+  }
+
   function renderCards() {
     const container = document.getElementById("cards");
     const hasReviews = reviews.length > 0;
 
-    document.getElementById("btn-open-all").style.display  = hasReviews ? "" : "none";
-    document.getElementById("btn-clear-all").style.display = hasReviews ? "" : "none";
+    document.getElementById("btn-open-all").style.display   = hasReviews ? "" : "none";
+    document.getElementById("btn-clear-all").style.display  = hasReviews ? "" : "none";
+    document.getElementById("controls-bar").style.display   = hasReviews ? "" : "none";
 
     if (!hasReviews) {
       container.innerHTML = `
@@ -354,7 +460,16 @@
       return;
     }
 
-    container.innerHTML = reviews.map((r, i) => {
+    if (filteredReviews.length === 0) {
+      container.innerHTML = `
+        <div class="empty">
+          <h2>No matching reviews</h2>
+          <p>Try adjusting the filters above.</p>
+        </div>`;
+      return;
+    }
+
+    container.innerHTML = filteredReviews.map((r, i) => {
       const failed = r.reviewStatus === "failed";
       const cardClass = [
         "card",
@@ -398,7 +513,7 @@
         <div class="${cardClass}" id="card-${i}">
           <div class="card-header">
             <div>
-              <a class="${titleClass}" href="${r.url}" target="_blank">${escHtml(r.title)}</a>
+              <a class="${titleClass}" href="${r.url}" target="_blank"><span class="pr-number">#${r.pull_number}</span>${escHtml(r.title)}</a>
               <div class="card-meta">${metaBadges}</div>
             </div>
             <div class="card-actions">
@@ -422,7 +537,7 @@
   }
 
   function openAll() {
-    reviews.filter(r => r.reviewStatus !== "failed").forEach(r => window.open(r.url, "_blank"));
+    filteredReviews.filter(r => r.reviewStatus !== "failed").forEach(r => window.open(r.url, "_blank"));
   }
 
   function prStatusBadge(status) {
@@ -603,8 +718,9 @@
         ...raw.filter(r => !r.prStatus || r.prStatus === "open"),
         ...raw.filter(r => r.prStatus && r.prStatus !== "open"),
       ];
+      populateRepoFilter();
+      applyControls();
       renderSummary();
-      renderCards();
       document.getElementById("refreshed-at").textContent =
         "Last refreshed: " + new Date().toLocaleTimeString();
     } catch (err) {
