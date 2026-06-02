@@ -262,7 +262,9 @@ async function reviewPR(
       repo: "unknown", pull_number: pr.number, author: "unknown", branch: "",
       filesChanged: 0, additions: 0, deletions: 0, feedback: "",
       reviewState: "PENDING", reviewStatus: "failed", prStatus: "open",
-      prCreatedAt: new Date().toISOString(), reviewRequestedAt: null, triggerType: 'review-requested' as TriggerType, reviewedAt: new Date().toISOString(), logFile,
+      prCreatedAt: new Date().toISOString(), reviewRequestedAt: null, triggerType: 'review-requested' as TriggerType,
+      lastReviewSubmittedAt: null, newCommits: [], commitsSeenAt: null,
+      reviewedAt: new Date().toISOString(), logFile,
     };
   }
 
@@ -297,6 +299,7 @@ async function reviewPR(
       additions: files.reduce((s, f) => s + f.additions, 0),
       deletions: files.reduce((s, f) => s + f.deletions, 0),
       feedback, reviewState, reviewStatus: "success", prStatus: "open",
+      lastReviewSubmittedAt: null, newCommits: [], commitsSeenAt: null,
       prCreatedAt: details.created_at, reviewRequestedAt, triggerType, reviewedAt: new Date().toISOString(), logFile,
     };
   } catch (err) {
@@ -323,6 +326,7 @@ async function reviewPR(
       repo: `${owner}/${repo}`, pull_number: pullNumber,
       author, branch, filesChanged, additions, deletions,
       feedback: "", reviewState: "PENDING", reviewStatus: "failed", prStatus: "open",
+      lastReviewSubmittedAt: null, newCommits: [], commitsSeenAt: null,
       prCreatedAt, reviewRequestedAt: null, triggerType, reviewedAt: new Date().toISOString(), logFile,
     };
   }

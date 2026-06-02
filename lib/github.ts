@@ -217,3 +217,91 @@ export async function refreshPRStatuses(
 
   return statusMap;
 }
+
+export interface CommitSummary {
+  sha: string;
+  message: string;
+  author: string;
+  date: string;
+}
+
+export interface PRRefreshData {
+  reviewState: ReviewState;
+  lastReviewSubmittedAt: string | null;
+  prStatus: PRStatus;
+  additions: number;
+  deletions: number;
+  filesChanged: number;
+  newCommits: CommitSummary[];
+}
+
+export async function refreshPRData(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  pull_number: number,
+  username: string,
+  commitsSeenAt: string | null
+): Promise<PRRefreshData> {
+  const [reviewsData, filesData, prData] = await Promise.all([
+    octokit.rest.pulls.listReviews({ owner, repo, pull_number }),
+    octokit.rest.pulls.listFiles({ owner, repo, pull_number, per_page: 100 }),
+    octokit.rest.pulls.get({ owner, repo, pull_number }),
+  ]);
+
+  // Review state + last submission time
+  const myReviews = reviewsData.data
+    .filter((r) => r.user?.login === username)
+    .sort((a, b) => new Date(a.submitted_at ?? 0).getTime() - new Date(b.submitted_at ?? 0).getTime());
+
+  const latestReview = myReviews[myReviews.length - 1];
+  const lastReviewSubmittedAt = latestReview?.submitted_at ?? null;
+
+  let reviewState: ReviewState = "PENDING";
+  if (latestReview) {
+    const state = latestReview.state as string;
+    if (state === "APPROVED")          reviewState = "APPROVED";
+    else if (state === "CHANGES_REQUESTED") reviewState = "CHANGES_REQUESTED";
+    else if (state === "COMMENTED")    reviewState = "COMMENTED";
+  }
+
+  // PR status
+  let prStatus: PRStatus = "open";
+  if (prData.data.merged)               prStatus = "merged";
+  else if (prData.data.state === "closed") prStatus = "closed";
+
+  // File stats
+  const files    = filesData.data;
+  const additions   = files.reduce((s, f) => s + f.additions, 0);
+  const deletions   = files.reduce((s, f) => s + f.deletions, 0);
+  const filesChanged = files.length;
+
+  // New commits since last seen or last review submitted
+  const since = commitsSeenAt ?? lastReviewSubmittedAt;
+  let newCommits: CommitSummary[] = [];
+  if (since) {
+    try {
+      const { data: commits } = await octokit.rest.pulls.listCommits({
+        owner, repo, pull_number, per_page: 100,
+      });
+      newCommits = commits
+        .filter((c) => {
+          const msg = c.commit.message.toLowerCase();
+          // Exclude merge commits and common non-substantive commit types
+          if (msg.startsWith("merge ") || msg.startsWith("merged ")) return false;
+          const date = c.commit.committer?.date ?? c.commit.author?.date ?? "";
+          return date > since;
+        })
+        .map((c) => ({
+          sha:     c.sha.slice(0, 7),
+          message: c.commit.message.split("\n")[0], // first line only
+          author:  c.commit.author?.name ?? c.author?.login ?? "unknown",
+          date:    c.commit.committer?.date ?? c.commit.author?.date ?? "",
+        }));
+    } catch {
+      // best effort
+    }
+  }
+
+  return { reviewState, lastReviewSubmittedAt, prStatus, additions, deletions, filesChanged, newCommits };
+}

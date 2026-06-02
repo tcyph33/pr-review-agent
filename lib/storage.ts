@@ -34,6 +34,9 @@ export interface PRReview {
   triggerType: TriggerType;
   reviewedAt: string;
   logFile: string; // relative path: logs/reviews/<id>.log
+  lastReviewSubmittedAt: string | null;
+  newCommits: import("./github.ts").CommitSummary[];
+  commitsSeenAt: string | null;
 }
 
 // ── Orchestration log helpers ─────────────────────────────────────────────────

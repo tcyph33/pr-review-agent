@@ -166,6 +166,8 @@
     .badge-waiting-low    { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
     .badge-waiting-medium { background: #2a1a0a; color: #e3b341; border: 1px solid #5a3800; }
     .badge-waiting-high   { background: #2a1a1a; color: #f85149; border: 1px solid #6e2020; }
+    .badge-commits        { background: #1f2d3d; color: #79c0ff; border: 1px solid #1a3a6e; cursor: pointer; }
+    .badge-commits:hover  { background: #263d54; }
     .badge-state-pending   { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
     .badge-state-commented { background: #1f2d3d; color: #58a6ff; border: 1px solid #1f4070; }
     .badge-state-changes   { background: #2a1a0a; color: #e3b341; border: 1px solid #5a3800; }
@@ -200,6 +202,64 @@
     .feedback::-webkit-scrollbar { width: 4px; }
     .feedback::-webkit-scrollbar-track { background: transparent; }
     .feedback::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
+
+    /* Commit popover */
+    .commits-popover {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      background: #1c2128;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 10px 0;
+      min-width: 360px;
+      max-width: 480px;
+      z-index: 50;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    }
+
+    .commits-popover-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 14px 10px;
+      border-bottom: 1px solid #30363d;
+      margin-bottom: 4px;
+    }
+
+    .commits-popover-title { font-size: 0.78rem; font-weight: 600; color: #c9d1d9; }
+
+    .commit-item {
+      padding: 7px 14px;
+      font-size: 0.78rem;
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+    }
+
+    .commit-item:hover { background: #21262d; }
+
+    .commit-sha   { color: #79c0ff; font-family: monospace; flex-shrink: 0; }
+    .commit-msg   { color: #c9d1d9; flex: 1; word-break: break-word; }
+    .commit-author { color: #8b949e; font-size: 0.72rem; flex-shrink: 0; }
+
+    .commit-mark-seen {
+      display: block;
+      width: calc(100% - 28px);
+      margin: 8px 14px 2px;
+      padding: 5px;
+      background: #21262d;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      color: #8b949e;
+      font-size: 0.75rem;
+      cursor: pointer;
+      text-align: center;
+    }
+
+    .commit-mark-seen:hover { color: #c9d1d9; border-color: #58a6ff; }
+
+    .card-header { position: relative; }
 
     /* Markdown rendering */
     .feedback h1 { font-size: 1rem; font-weight: 600; color: #f0f6fc; margin: 12px 0 6px; }
@@ -317,7 +377,7 @@
     <div class="meta" id="refreshed-at"></div>
   </div>
   <div class="actions">
-    <button class="btn-ghost" onclick="loadReviews()">↺ Refresh</button>
+    <button class="btn-ghost" onclick="refreshAndLoad()">↺ Refresh</button>
     <button class="btn-danger" id="btn-clear-all" onclick="confirmClearAll()" style="display:none">Clear All</button>
     <button class="btn-primary" id="btn-open-all" onclick="openAll()" style="display:none">Open All</button>
   </div>
@@ -522,6 +582,7 @@
              return `<span class="badge ${cls}">${label}</span>`;
            })()}
            ${reviewStateBadge(r.reviewState || "PENDING")}
+           ${(r.newCommits && r.newCommits.length > 0) ? `<span class="badge badge-commits" data-id="${escHtml(r.id)}" onclick="showCommits('${escHtml(r.id)}', ${JSON.stringify(r.newCommits || [])}, this)">↑ ${r.newCommits.length} new commit${r.newCommits.length !== 1 ? 's' : ''}</span>` : ''}
            ${prStatusBadge(r.prStatus)}`;
 
       const cardBody = failed
@@ -735,6 +796,60 @@
     banner.style.display = "";
     banner.textContent = msg;
     setTimeout(() => { banner.style.display = "none"; }, 5000);
+  }
+
+  let activePopover = null;
+
+  function closePopovers() {
+    document.querySelectorAll('.commits-popover').forEach(p => p.remove());
+    activePopover = null;
+  }
+
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.badge-commits') && !e.target.closest('.commits-popover')) {
+      closePopovers();
+    }
+  });
+
+  async function markSeen(id, btn) {
+    try {
+      await fetch(`/api/reviews/${encodeURIComponent(id)}/mark-seen`, { method: "POST" });
+      closePopovers();
+      await loadReviews();
+    } catch (err) {
+      showError(`Could not mark as seen: ${err.message}`);
+    }
+  }
+
+  function showCommits(id, commits, btn) {
+    closePopovers();
+    const popover = document.createElement('div');
+    popover.className = 'commits-popover';
+    popover.innerHTML = `
+      <div class="commits-popover-header">
+        <span class="commits-popover-title">${commits.length} new commit${commits.length !== 1 ? 's' : ''} since your last review</span>
+      </div>
+      ${commits.map(c => `
+        <div class="commit-item">
+          <span class="commit-sha">${escHtml(c.sha)}</span>
+          <span class="commit-msg">${escHtml(c.message)}</span>
+          <span class="commit-author">${escHtml(c.author)}</span>
+        </div>
+      `).join('')}
+      <button class="commit-mark-seen" data-id="${escHtml(id)}" onclick="markSeen('${escHtml(id)}', this)">Mark as seen</button>
+    `;
+    btn.closest('.card-header').appendChild(popover);
+    activePopover = popover;
+  }
+
+  async function refreshAndLoad() {
+    const btn = document.querySelector('[onclick="refreshAndLoad()"]');
+    if (btn) { btn.textContent = "↺ Refreshing..."; btn.disabled = true; }
+    try {
+      await fetch('/api/refresh', { method: 'POST' });
+    } catch { /* continue even if refresh fails */ }
+    await loadReviews();
+    if (btn) { btn.textContent = "↺ Refresh"; btn.disabled = false; }
   }
 
   async function loadReviews() {

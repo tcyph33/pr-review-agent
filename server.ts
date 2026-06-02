@@ -8,6 +8,7 @@ import os from "os";
 import path from "path";
 import { execSync } from "child_process";
 import { fileURLToPath } from "url";
+import { createOctokit, refreshPRData } from "./lib/github.ts";
 
 const __dirname      = path.dirname(fileURLToPath(import.meta.url));
 const RESULTS_PATH   = path.join(__dirname, "results", "reviews.json");
@@ -17,6 +18,9 @@ const PORT           = 3000;
 const GITHUB_API_TOKEN = process.env.GITHUB_API_TOKEN;
 const REVIEW_SKILL_URL = process.env.REVIEW_SKILL_URL;
 
+
+const octokit = GITHUB_API_TOKEN ? createOctokit(GITHUB_API_TOKEN) : null;
+const GITHUB_USERNAME = process.env.GITHUB_USERNAME ?? "";
 const MIME: Record<string, string> = {
   ".html": "text/html",
   ".css":  "text/css",
@@ -159,6 +163,66 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") {
     res.writeHead(204);
     res.end();
+    return;
+  }
+
+  // ── POST /api/refresh ───────────────────────────────────────────────────────
+  if (req.method === "POST" && url.pathname === "/api/refresh") {
+    if (!octokit) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "GITHUB_API_TOKEN not set" }));
+      return;
+    }
+
+    const reviews  = readReviews();
+    const open     = reviews.filter(r => r.prStatus === "open" || !r.prStatus);
+    const username = GITHUB_USERNAME || (await (async () => {
+      const { data } = await octokit!.rest.users.getAuthenticated();
+      return data.login;
+    })());
+
+    let updated = 0;
+    await Promise.all(open.map(async (review) => {
+      try {
+        const [owner, repoName] = review.repo.split("/");
+        const refreshed = await refreshPRData(
+          octokit!, owner, repoName, review.pull_number,
+          username, review.commitsSeenAt
+        );
+        review.reviewState         = refreshed.reviewState as typeof review.reviewState;
+        review.lastReviewSubmittedAt = refreshed.lastReviewSubmittedAt;
+        review.prStatus            = refreshed.prStatus;
+        review.additions           = refreshed.additions;
+        review.deletions           = refreshed.deletions;
+        review.filesChanged        = refreshed.filesChanged;
+        review.newCommits          = refreshed.newCommits;
+        updated++;
+      } catch {
+        // best effort per PR
+      }
+    }));
+
+    writeReviews(reviews);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, updated }));
+    return;
+  }
+
+  // ── POST /api/reviews/:id/mark-seen ──────────────────────────────────────
+  if (req.method === "POST" && url.pathname.includes("/mark-seen")) {
+    const id      = decodeURIComponent(url.pathname.replace("/api/reviews/", "").replace("/mark-seen", ""));
+    const reviews = readReviews();
+    const review  = reviews.find(r => r.id === id);
+    if (!review) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Review not found" }));
+      return;
+    }
+    review.commitsSeenAt = new Date().toISOString();
+    review.newCommits    = [];
+    writeReviews(reviews);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
     return;
   }
 
