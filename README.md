@@ -80,13 +80,13 @@ The script reads credentials from `process.env`. You have two options — pick e
 **Option A — `.env` file** (created by setup-macos.sh):
 ```
 GITHUB_API_TOKEN=ghp_yourTokenHere
-REVIEW_SKILL_URL=https://raw.githubusercontent.com/tcyph33/claude-toolkit/refs/heads/main/skills/code-review/SKILL.md
+REVIEW_SKILL_URL=https://api.github.com/repos/tcyph33/claude-toolkit/contents/skills/code-review/SKILL.md
 ```
 
 **Option B — environment variables** set in your shell profile or system:
 ```bash
 export GITHUB_API_TOKEN=ghp_yourTokenHere
-export REVIEW_SKILL_URL=https://raw.githubusercontent.com/tcyph33/claude-toolkit/refs/heads/main/skills/code-review/SKILL.md
+export REVIEW_SKILL_URL=https://api.github.com/repos/tcyph33/claude-toolkit/contents/skills/code-review/SKILL.md
 ```
 
 If a variable is set in the environment it takes precedence over `.env`.
@@ -111,7 +111,7 @@ npm run review
 Expected output:
 ```
 🚀  PR Review Agent starting...
-📥  Fetching review skill from https://raw.githubusercontent.com/...
+📥  Fetching review skill from https://api.github.com/repos/...
     Loaded 4821 characters.
 🔄  Refreshing status of 2 existing review(s)...
     1 PR(s) are now merged or closed.

@@ -76,11 +76,13 @@ async function fetchSkill(): Promise<string> {
   const res = await fetch(REVIEW_SKILL_URL, {
     headers: {
       Authorization: `token ${GITHUB_API_TOKEN}`,
-      Accept: "application/vnd.github.raw",
+      Accept: "application/vnd.github.json",
     },
   });
   if (!res.ok) throw new Error(`Failed to fetch skill: ${res.status} ${res.statusText}`);
-  return res.text();
+  const json = await res.json() as { content?: string };
+  if (!json.content) throw new Error("Unexpected response from GitHub API — no content field");
+  return Buffer.from(json.content.replace(/\n/g, ""), "base64").toString("utf8");
 }
 
 function buildClaudeMessage(review: Review): string {

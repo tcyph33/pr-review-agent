@@ -114,7 +114,7 @@ async function fetchSkillWithRetry(
       const res = await fetch(reviewSkillUrl, {
         headers: {
           Authorization: `token ${githubToken}`,
-          Accept: "application/vnd.github.raw",
+          Accept: "application/vnd.github.json",
         },
       });
       console.log(`    Response status: ${res.status} ${res.statusText}`);
@@ -123,7 +123,12 @@ async function fetchSkillWithRetry(
         console.log(`    Response body: ${body.slice(0, 200)}`);
         throw new Error(`HTTP ${res.status} ${res.statusText}`);
       }
-      return await res.text();
+      const json = await res.json() as { content?: string; message?: string };
+      if (!json.content) {
+        throw new Error(`Unexpected response — no content field: ${JSON.stringify(json).slice(0, 200)}`);
+      }
+      // GitHub API returns base64-encoded content with newlines — strip them before decoding
+      return Buffer.from(json.content.replace(/\n/g, ""), "base64").toString("utf8");
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
       console.log(`    Error: ${lastError.message}`);
