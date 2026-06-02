@@ -79,13 +79,13 @@ The script reads credentials from `process.env`. You have two options — pick e
 
 **Option A — `.env` file** (created by setup-macos.sh):
 ```
-GITHUB_TOKEN=ghp_yourTokenHere
+GITHUB_API_TOKEN=ghp_yourTokenHere
 REVIEW_SKILL_URL=https://raw.githubusercontent.com/tcyph33/claude-toolkit/refs/heads/main/skills/code-review/SKILL.md
 ```
 
 **Option B — environment variables** set in your shell profile or system:
 ```bash
-export GITHUB_TOKEN=ghp_yourTokenHere
+export GITHUB_API_TOKEN=ghp_yourTokenHere
 export REVIEW_SKILL_URL=https://raw.githubusercontent.com/tcyph33/claude-toolkit/refs/heads/main/skills/code-review/SKILL.md
 ```
 
@@ -93,7 +93,7 @@ If a variable is set in the environment it takes precedence over `.env`.
 
 | Variable | Description |
 |---|---|
-| `GITHUB_TOKEN` | Personal access token. Needs `pull_requests: read` and `contents: read`. Settings → Developer settings → Fine-grained tokens. |
+| `GITHUB_API_TOKEN` | Personal access token. Needs `pull_requests: read` and `contents: read`. Settings → Developer settings → Fine-grained tokens. |
 | `REVIEW_SKILL_URL` | Raw GitHub URL to your `code-review` skill `.md` file |
 
 ### 3. Authenticate GitHub CLI
