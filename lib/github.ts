@@ -51,19 +51,6 @@ export async function getPRsNeedingReview(
   return data.items;
 }
 
-export async function getPRDiff(
-  octokit: Octokit,
-  owner: string,
-  repo: string,
-  pull_number: number
-): Promise<string> {
-  const { data } = await octokit.rest.pulls.get({
-    owner, repo, pull_number,
-    mediaType: { format: "diff" },
-  });
-  return data as unknown as string;
-}
-
 export async function getPRDetails(
   octokit: Octokit,
   owner: string,

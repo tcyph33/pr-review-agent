@@ -1,8 +1,8 @@
 import { execSync } from "child_process";
 import os from "os";
 
-export function notify(title: string, message: string): void {
-  if (os.platform() !== "darwin") return; // notifications only supported on macOS
+function send(title: string, message: string): void {
+  if (os.platform() !== "darwin") return;
   try {
     const escaped      = message.replace(/'/g, "\\'");
     const escapedTitle = title.replace(/'/g, "\\'");
@@ -10,6 +10,18 @@ export function notify(title: string, message: string): void {
   } catch {
     // notifications are best-effort — never crash the script over them
   }
+}
+
+export function notify(title: string, message: string): void {
+  send(title, message);
+}
+
+export function notifyFailure(failedCount: number, orchLogPath: string): void {
+  const logName = orchLogPath.split("/").pop() ?? "log";
+  send(
+    "PR Review Agent — Failures",
+    `${failedCount} review${failedCount !== 1 ? "s" : ""} failed. Check ${logName} for details.`
+  );
 }
 
 export function buildNotificationSummary(newCount: number, updatedCount: number): string | null {

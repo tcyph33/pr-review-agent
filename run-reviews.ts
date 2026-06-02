@@ -13,8 +13,8 @@ import {
   getPRFiles,
   getMyReviewState,
   refreshPRStatuses,
-} from "./lib/github.js";
-import type { SearchPRItem } from "./lib/github.js";
+} from "./lib/github.ts";
+import type { SearchPRItem } from "./lib/github.ts";
 import {
   loadReviews,
   saveReviews,
@@ -24,9 +24,9 @@ import {
   cleanupOldLogs,
   PR_LOGS_PATH,
   RESULTS_PATH,
-} from "./lib/storage.js";
-import type { PRReview } from "./lib/storage.js";
-import { notify, notifyFailure, buildNotificationSummary } from "./lib/notify.js";
+} from "./lib/storage.ts";
+import type { PRReview } from "./lib/storage.ts";
+import { notify, notifyFailure, buildNotificationSummary } from "./lib/notify.ts";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
