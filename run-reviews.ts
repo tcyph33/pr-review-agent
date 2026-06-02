@@ -105,7 +105,11 @@ async function fetchSkillWithRetry(
 ): Promise<string> {
   let lastError: Error | null = null;
 
+  console.log(`    URL: ${reviewSkillUrl}`);
+  console.log(`    Token prefix: ${githubToken?.slice(0, 8)}...`);
+
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    console.log(`    Attempt ${attempt}/${maxAttempts}...`);
     try {
       const res = await fetch(reviewSkillUrl, {
         headers: {
@@ -113,12 +117,19 @@ async function fetchSkillWithRetry(
           Accept: "application/vnd.github.raw",
         },
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+      console.log(`    Response status: ${res.status} ${res.statusText}`);
+      if (!res.ok) {
+        const body = await res.text();
+        console.log(`    Response body: ${body.slice(0, 200)}`);
+        throw new Error(`HTTP ${res.status} ${res.statusText}`);
+      }
       return await res.text();
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
+      console.log(`    Error: ${lastError.message}`);
       if (attempt < maxAttempts) {
-        await new Promise(r => setTimeout(r, delayMs * attempt)); // exponential backoff
+        console.log(`    Retrying in ${delayMs * attempt}ms...`);
+        await new Promise(r => setTimeout(r, delayMs * attempt));
       }
     }
   }
