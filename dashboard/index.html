@@ -157,6 +157,24 @@
     .feedback::-webkit-scrollbar-track { background: transparent; }
     .feedback::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
 
+    /* Markdown rendering */
+    .feedback h1 { font-size: 1rem; font-weight: 600; color: #f0f6fc; margin: 12px 0 6px; }
+    .feedback h2 { font-size: 0.9rem; font-weight: 600; color: #e6edf3; margin: 10px 0 5px; }
+    .feedback h3 { font-size: 0.85rem; font-weight: 600; color: #c9d1d9; margin: 8px 0 4px; }
+    .feedback strong { color: #e6edf3; font-weight: 600; }
+    .feedback em { font-style: italic; color: #c9d1d9; }
+    .feedback code { background: #21262d; color: #79c0ff; padding: 1px 5px; border-radius: 4px; font-family: "SF Mono", "Fira Code", monospace; font-size: 0.8rem; }
+    .feedback pre { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 10px 12px; margin: 8px 0; overflow-x: auto; }
+    .feedback pre code { background: transparent; color: #c9d1d9; padding: 0; font-size: 0.78rem; }
+    .feedback ul, .feedback ol { padding-left: 20px; margin: 6px 0; }
+    .feedback li { margin: 3px 0; }
+    .feedback hr { border: none; border-top: 1px solid #30363d; margin: 10px 0; }
+    .feedback p { margin: 6px 0; }
+    .feedback table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 0.8rem; }
+    .feedback th { background: #21262d; color: #e6edf3; padding: 6px 10px; text-align: left; border: 1px solid #30363d; }
+    .feedback td { padding: 5px 10px; border: 1px solid #30363d; color: #c9d1d9; }
+    .feedback tr:nth-child(even) td { background: #161b22; }
+
     .card-footer { padding: 10px 20px; display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid #21262d; }
 
     .empty { text-align: center; padding: 80px 24px; color: #8b949e; }
@@ -367,7 +385,7 @@
            </div>`
         : `<div class="card-body">
              <div class="feedback-label">Agent Feedback</div>
-             <div class="feedback" id="feedback-${i}">${escHtml(r.feedback)}</div>
+             <div class="feedback" id="feedback-${i}">${renderMarkdown(r.feedback)}</div>
            </div>`;
 
       const cardFooter = failed
@@ -423,6 +441,59 @@
     };
     const [cls, label] = map[state] || map["PENDING"];
     return `<span class="badge ${cls}">${label}</span>`;
+  }
+
+  function renderMarkdown(raw) {
+    // Escape HTML first to prevent XSS, then apply markdown on top
+    const escaped = String(raw)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+
+    return escaped
+      // Fenced code blocks (preserve content, undo escaping inside)
+      .replace(/```([\w]*)?\n?([\s\S]*?)```/g, (_, lang, code) =>
+        `<pre><code>${code.trim()}</code></pre>`)
+      // Inline code
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      // Tables (must come before other block elements)
+      .replace(/^\|(.+)\|$/gm, (row) => {
+        const cells = row.split("|").slice(1, -1).map(c => c.trim());
+        return "<tr>" + cells.map(cell =>
+          /^[-:]+$/.test(cell) ? "" : `<td>${cell}</td>`
+        ).filter(Boolean).join("") + "</tr>";
+      })
+      .replace(/(<tr>.*<\/tr>\n?)+/gs, (table) => {
+        const rows = table.trim().split("\n");
+        const header = rows[0].replace(/<td>/g, "<th>").replace(/<\/td>/g, "</th>");
+        const body = rows.slice(2).join("\n");
+        return `<table><thead>${header}</thead><tbody>${body}</tbody></table>`;
+      })
+      // Headings
+      .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+      .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+      .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+      // Bold + italic
+      .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+      // Bold
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      // Italic
+      .replace(/\*(.+?)\*/g, '<em>$1</em>')
+      // Horizontal rule
+      .replace(/^---$/gm, '<hr>')
+      // Unordered lists
+      .replace(/((?:^[ \t]*[-*] .+\n?)+)/gm, (block) => {
+        const items = block.trim().split("\n").map(line =>
+          `<li>${line.replace(/^[ \t]*[-*] /, "")}</li>`
+        ).join("");
+        return `<ul>${items}</ul>`;
+      })
+      // Paragraphs
+      .replace(/\n\n+/g, '</p><p>')
+      .replace(/^(?!<[a-z])(.+)$/gm, (line) => line)
+      .replace(/^(.+)$\n(?=<ul>|<pre>|<h[1-6]>|<hr>|<table>)/gm, '$1')
+      // Wrap in paragraph tags if not already a block element
+      .replace(/^(?!<(?:h[1-6]|ul|ol|li|pre|hr|table|thead|tbody|tr|th|td|p))(.+)$/gm, '<p>$1</p>');
   }
 
   function escHtml(str) {

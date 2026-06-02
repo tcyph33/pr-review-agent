@@ -214,10 +214,17 @@ async function runWithClaudeCode(
         return;
       }
 
-      const result = chunks.join("").trim();
-      fs.appendFileSync(logPath, result + `\n\n=== Completed: ${new Date().toISOString()}\n`);
+      const fullOutput = chunks.join("").trim();
+      fs.appendFileSync(logPath, fullOutput + `\n\n=== Completed: ${new Date().toISOString()}\n`);
       orchLog(`  ✅  Completed: ${prUrl}`);
-      resolve(result);
+
+      // Extract just the structured review report from the full Claude Code output.
+      // The skill produces a report starting with "# PR Review:" — everything before
+      // that is Claude Code's internal output (tool calls, thinking, status messages).
+      const reportMatch = fullOutput.match(/(# PR Review:[\s\S]+)/);
+      const feedback = reportMatch ? reportMatch[1].trim() : fullOutput;
+
+      resolve(feedback);
     });
 
     proc.on("error", (err: Error) => {
