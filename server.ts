@@ -2,6 +2,7 @@
 
 import "dotenv/config";
 import http from "http";
+import https from "https";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -73,15 +74,23 @@ async function fetchSkill(): Promise<string> {
   if (!REVIEW_SKILL_URL || !GITHUB_API_TOKEN) {
     throw new Error("REVIEW_SKILL_URL and GITHUB_API_TOKEN must be set in environment");
   }
-  const res = await fetch(REVIEW_SKILL_URL, {
-    headers: {
-      Authorization: `token ${GITHUB_API_TOKEN}`,
-      Accept: "application/vnd.github.json",
-    },
+  const text = await new Promise<string>((resolve, reject) => {
+    const req = https.get(REVIEW_SKILL_URL, {
+      headers: {
+        Authorization: `token ${GITHUB_API_TOKEN}`,
+        Accept: "application/vnd.github.json",
+        "User-Agent": "pr-review-agent",
+      },
+    }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on("data", (chunk: Buffer) => chunks.push(chunk));
+      res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    });
+    req.on("error", reject);
+    req.end();
   });
-  if (!res.ok) throw new Error(`Failed to fetch skill: ${res.status} ${res.statusText}`);
-  const json = await res.json() as { content?: string };
-  if (!json.content) throw new Error("Unexpected response from GitHub API — no content field");
+  const json = JSON.parse(text) as { content?: string; message?: string };
+  if (!json.content) throw new Error(`GitHub API error or missing content: ${text.slice(0, 200)}`);
   return Buffer.from(json.content.replace(/\n/g, ""), "base64").toString("utf8");
 }
 

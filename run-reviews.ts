@@ -2,6 +2,7 @@
 
 import "dotenv/config";
 import { execSync, execFileSync } from "child_process";
+import https from "https";
 import os from "os";
 import fs from "fs";
 import path from "path";
@@ -111,21 +112,29 @@ async function fetchSkillWithRetry(
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     console.log(`    Attempt ${attempt}/${maxAttempts}...`);
     try {
-      const res = await fetch(reviewSkillUrl, {
-        headers: {
-          Authorization: `token ${githubToken}`,
-          Accept: "application/vnd.github.json",
-        },
+      const text = await new Promise<string>((resolve, reject) => {
+        const req = https.get(reviewSkillUrl, {
+          headers: {
+            Authorization: `token ${githubToken}`,
+            Accept: "application/vnd.github.json",
+            "User-Agent": "pr-review-agent",
+          },
+        }, (res) => {
+          console.log(`    Response status: ${res.statusCode} ${res.statusMessage}`);
+          const chunks: Buffer[] = [];
+          res.on("data", (chunk: Buffer) => chunks.push(chunk));
+          res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+        });
+        req.on("error", reject);
+        req.end();
       });
-      console.log(`    Response status: ${res.status} ${res.statusText}`);
-      if (!res.ok) {
-        const body = await res.text();
-        console.log(`    Response body: ${body.slice(0, 200)}`);
-        throw new Error(`HTTP ${res.status} ${res.statusText}`);
+      const json = JSON.parse(text) as { content?: string; message?: string; status?: string };
+      if (json.message || json.status) {
+        console.log(`    Response body: ${text.slice(0, 200)}`);
+        throw new Error(`GitHub API error: ${json.message ?? json.status}`);
       }
-      const json = await res.json() as { content?: string; message?: string };
       if (!json.content) {
-        throw new Error(`Unexpected response — no content field: ${JSON.stringify(json).slice(0, 200)}`);
+        throw new Error(`Unexpected response — no content field: ${text.slice(0, 200)}`);
       }
       // GitHub API returns base64-encoded content with newlines — strip them before decoding
       return Buffer.from(json.content.replace(/\n/g, ""), "base64").toString("utf8");
