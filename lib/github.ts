@@ -94,7 +94,9 @@ export async function getPRFiles(
   return data;
 }
 
-export async function getReviewRequestedAt(
+export type TriggerType = "review-requested" | "assignee" | "both";
+
+async function getReviewerRequestedAt(
   octokit: Octokit,
   owner: string,
   repo: string,
@@ -106,12 +108,59 @@ export async function getReviewRequestedAt(
       owner, repo, pull_number,
     });
     const reviewer = data.users.find((u) => u.login === username);
-    // GitHub returns requested_at on the reviewer object when available
     const requestedAt = (reviewer as unknown as { requested_at?: string })?.requested_at;
     return requestedAt ?? null;
   } catch {
     return null;
   }
+}
+
+async function getAssigneeRequestedAt(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  pull_number: number,
+  username: string
+): Promise<string | null> {
+  try {
+    // Use the issues events API to find when this user was assigned
+    const { data } = await octokit.rest.issues.listEvents({
+      owner, repo, issue_number: pull_number, per_page: 100,
+    });
+    // Find the most recent assigned event for this user
+    const assignedEvents = data
+      .filter((e) => e.event === "assigned" &&
+        (e as unknown as { assignee?: { login: string } }).assignee?.login === username)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    return assignedEvents[0]?.created_at ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getReviewRequestedAt(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  pull_number: number,
+  username: string,
+  triggerType: TriggerType
+): Promise<string | null> {
+  const dates: string[] = [];
+
+  if (triggerType === "review-requested" || triggerType === "both") {
+    const d = await getReviewerRequestedAt(octokit, owner, repo, pull_number, username);
+    if (d) dates.push(d);
+  }
+
+  if (triggerType === "assignee" || triggerType === "both") {
+    const d = await getAssigneeRequestedAt(octokit, owner, repo, pull_number, username);
+    if (d) dates.push(d);
+  }
+
+  if (dates.length === 0) return null;
+  // Return the oldest date — when you first became responsible for this PR
+  return dates.sort()[0];
 }
 
 export async function getMyReviewState(

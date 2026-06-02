@@ -16,7 +16,7 @@ import {
   getReviewRequestedAt,
   refreshPRStatuses,
 } from "./lib/github.ts";
-import type { SearchPRItem, RepoConfig } from "./lib/github.ts";
+import type { SearchPRItem, RepoConfig, TriggerType } from "./lib/github.ts";
 import {
   loadReviews,
   saveReviews,
@@ -244,6 +244,7 @@ async function reviewPR(
   pr: SearchPRItem,
   skill: string,
   username: string,
+  triggerType: TriggerType,
   orchLog: (msg: string) => void
 ): Promise<PRReview> {
   const prUrl = pr.pull_request?.url;
@@ -261,7 +262,7 @@ async function reviewPR(
       repo: "unknown", pull_number: pr.number, author: "unknown", branch: "",
       filesChanged: 0, additions: 0, deletions: 0, feedback: "",
       reviewState: "PENDING", reviewStatus: "failed", prStatus: "open",
-      prCreatedAt: new Date().toISOString(), reviewRequestedAt: null, reviewedAt: new Date().toISOString(), logFile,
+      prCreatedAt: new Date().toISOString(), reviewRequestedAt: null, triggerType: 'review-requested' as TriggerType, reviewedAt: new Date().toISOString(), logFile,
     };
   }
 
@@ -281,7 +282,7 @@ async function reviewPR(
       getPRFiles(octokit, owner, repo, pullNumber),
       getPRDetails(octokit, owner, repo, pullNumber),
       getMyReviewState(octokit, owner, repo, pullNumber, username),
-      getReviewRequestedAt(octokit, owner, repo, pullNumber, username),
+      getReviewRequestedAt(octokit, owner, repo, pullNumber, username, triggerType),
     ]);
 
     const feedback = await runWithClaudeCode(skill, pr.html_url, logPath, orchLog);
@@ -322,7 +323,7 @@ async function reviewPR(
       repo: `${owner}/${repo}`, pull_number: pullNumber,
       author, branch, filesChanged, additions, deletions,
       feedback: "", reviewState: "PENDING", reviewStatus: "failed", prStatus: "open",
-      prCreatedAt, reviewRequestedAt: null, reviewedAt: new Date().toISOString(), logFile,
+      prCreatedAt, reviewRequestedAt: null, triggerType, reviewedAt: new Date().toISOString(), logFile,
     };
   }
 }
@@ -402,7 +403,15 @@ async function main(): Promise<void> {
   // ── Step 3: review each PR in parallel via Claude Code ────────────────────
   tee(`\n📋  Reviewing ${prs.length} PR(s) in parallel via Claude Code...\n`);
 
-  const results   = await Promise.all(prs.map((pr) => reviewPR(pr, skill, username, orchLog)));
+  const results   = await Promise.all(prs.map((pr) => {
+    const prRepo = pr.repository_url?.replace("https://api.github.com/repos/", "") ?? "";
+    const inRequested = repoConfig.reviewRequestedRepos.includes(prRepo);
+    const inAssignee  = repoConfig.assigneeRepos.includes(prRepo);
+    const triggerType: TriggerType =
+      inRequested && inAssignee ? "both" :
+      inAssignee ? "assignee" : "review-requested";
+    return reviewPR(pr, skill, username, triggerType, orchLog);
+  }));
   const succeeded = results.filter(r => r.reviewStatus === "success").length;
   const failed    = results.filter(r => r.reviewStatus === "failed").length;
 

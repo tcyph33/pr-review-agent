@@ -163,7 +163,9 @@
     .badge-del    { background: #2a1a1a; color: #f85149; }
     .badge-time   { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
     .badge-failed { background: #3d1c1c; color: #f85149; border: 1px solid #6e2020; }
-    .badge-waiting         { background: #1a2035; color: #79c0ff; border: 1px solid #1a3a6e; }
+    .badge-waiting-low    { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
+    .badge-waiting-medium { background: #2a1a0a; color: #e3b341; border: 1px solid #5a3800; }
+    .badge-waiting-high   { background: #2a1a1a; color: #f85149; border: 1px solid #6e2020; }
     .badge-state-pending   { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
     .badge-state-commented { background: #1f2d3d; color: #58a6ff; border: 1px solid #1f4070; }
     .badge-state-changes   { background: #2a1a0a; color: #e3b341; border: 1px solid #5a3800; }
@@ -512,7 +514,13 @@
            <span class="badge badge-add">+${r.additions}</span>
            <span class="badge badge-del">-${r.deletions}</span>
            <span class="badge badge-time">${prAgeDays(r) === 1 ? '1 day old' : prAgeDays(r) + ' days old'}</span>
-           ${waitingDays(r) !== null ? `<span class="badge badge-waiting">⏳ Waiting ${waitingDays(r) === 1 ? '1 day' : waitingDays(r) + ' days'}</span>` : ''}
+           ${(() => {
+             const wd = waitingDays(r);
+             if (wd === null) return '';
+             const cls = wd >= 5 ? 'badge-waiting-high' : wd >= 3 ? 'badge-waiting-medium' : 'badge-waiting-low';
+             const label = wd === 1 ? 'Waiting 1 day' : `Waiting ${wd} days`;
+             return `<span class="badge ${cls}">${label}</span>`;
+           })()}
            ${reviewStateBadge(r.reviewState || "PENDING")}
            ${prStatusBadge(r.prStatus)}`;
 

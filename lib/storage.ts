@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import type { ReviewState, PRStatus } from "./github.ts";
+import type { ReviewState, PRStatus, TriggerType } from "./github.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const RESULTS_PATH        = path.join(__dirname, "..", "results", "reviews.json");
@@ -31,6 +31,7 @@ export interface PRReview {
   prStatus: PRStatus;
   prCreatedAt: string;
   reviewRequestedAt: string | null;
+  triggerType: TriggerType;
   reviewedAt: string;
   logFile: string; // relative path: logs/reviews/<id>.log
 }
