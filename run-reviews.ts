@@ -161,8 +161,10 @@ function runWithClaudeCode(
   logPath: string,
   orchLog: (msg: string) => void
 ): string {
-  const skillPath = path.join(os.tmpdir(), "pr-review-skill.md");
+  const skillPath   = path.join(os.tmpdir(), "pr-review-skill.md");
+  const messagePath = path.join(os.tmpdir(), "pr-review-message.txt");
   fs.writeFileSync(skillPath, skill, "utf8");
+  fs.writeFileSync(messagePath, `Please review this PR: ${prUrl}`, "utf8");
 
   const header = `=== PR Review: ${prUrl}\n=== Started: ${new Date().toISOString()}\n\n`;
   if (!fs.existsSync(path.dirname(logPath))) {
@@ -172,7 +174,7 @@ function runWithClaudeCode(
 
   try {
     const output = execSync(
-      `claude --print --system-prompt "$(cat '${skillPath}')" "/code-review ${prUrl}"`,
+      `claude --print --system-prompt "$(cat '${skillPath}')" "$(cat '${messagePath}')"`,
       {
         encoding: "utf8",
         timeout: 30 * 60 * 1000,     // 30 minute timeout per PR
