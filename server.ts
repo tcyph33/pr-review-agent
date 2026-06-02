@@ -126,22 +126,19 @@ async function launchClaudeCode(review: Review): Promise<void> {
   const repoName = review.repo.split("/")[1];
   const cloneDir = `~/PR-Reviews/${repoName}-${review.pull_number}`;
   const cdCmd    = `[ -d ${cloneDir} ] && cd ${cloneDir} || cd ~/PR-Reviews`;
-  const claudeCmd = `claude --system-prompt "$(cat '${skillPath}')" "$(cat '${messagePath}')"`;
+  // Read and delete message file inline — avoids race condition where server deletes it before Terminal reads it
+  const claudeCmd = `claude --system-prompt "$(cat '${skillPath}')" "$(cat '${messagePath}' && rm '${messagePath}')"`;
   const fullCmd  = `${cdCmd} && ${claudeCmd}`;
-  const prLabel  = `#${review.pull_number} ${review.title}`.slice(0, 60).replace(/"/g, "'");
 
   const script = [
     `tell application "Terminal"`,
     `  do script "${fullCmd.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`,
     `  activate`,
     `end tell`,
-    `display notification "${prLabel} — opened in Terminal" with title "Claude Code" subtitle "Click to switch to Terminal"`,
   ].join("\n");
 
   execSync(`osascript << 'APPLESCRIPT'\n${script}\nAPPLESCRIPT`);
 
-  // Clean up temp message file after launch
-  try { fs.unlinkSync(messagePath); } catch { /* best effort */ }
 }
 
 // ── Request handler ───────────────────────────────────────────────────────────
