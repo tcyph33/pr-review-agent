@@ -186,22 +186,60 @@
       font-style: italic;
     }
 
-    .feedback {
+    .feedback-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: #8b949e; margin-bottom: 10px; font-weight: 600; }
+
+    .feedback-preview {
       font-size: 0.875rem;
       line-height: 1.65;
       color: #c9d1d9;
-      white-space: pre-wrap;
-      word-break: break-word;
-      max-height: 300px;
-      overflow-y: auto;
-      padding-right: 4px;
+      cursor: pointer;
     }
 
-    .feedback.expanded { max-height: none; }
-    .feedback-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: #8b949e; margin-bottom: 10px; font-weight: 600; }
-    .feedback::-webkit-scrollbar { width: 4px; }
-    .feedback::-webkit-scrollbar-track { background: transparent; }
-    .feedback::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
+    .feedback-preview:hover .feedback-click-hint { color: #58a6ff; }
+
+    .feedback-section { margin-bottom: 12px; }
+    .feedback-section-label {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #6e7681;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .feedback-section-body {
+      font-size: 0.875rem;
+      line-height: 1.6;
+      color: #c9d1d9;
+      word-break: break-word;
+    }
+
+    .feedback-section-body p { margin: 0; }
+    .feedback-section-body strong { color: #e6edf3; }
+    .feedback-section-body em { color: #c9d1d9; font-style: italic; }
+    .feedback-section-body code { background: #21262d; color: #79c0ff; padding: 1px 5px; border-radius: 4px; font-family: "SF Mono", "Fira Code", monospace; font-size: 0.8rem; }
+    .feedback-section-body ul, .feedback-section-body ol { padding-left: 20px; margin: 4px 0; }
+    .feedback-section-body li { margin: 2px 0; }
+
+    .verdict-chip {
+      display: inline-block;
+      font-size: 0.78rem;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 20px;
+      margin-bottom: 4px;
+    }
+    .verdict-approve  { background: #1a2a1a; color: #3fb950; border: 1px solid #1a4a1a; }
+    .verdict-changes  { background: #2a1a0a; color: #e3b341; border: 1px solid #5a3800; }
+    .verdict-reject   { background: #2a1a1a; color: #f85149; border: 1px solid #6e2020; }
+    .verdict-neutral  { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
+
+    .feedback-click-hint {
+      font-size: 0.72rem;
+      color: #6e7681;
+      margin-top: 10px;
+      transition: color 0.15s;
+    }
 
     /* Commit modal */
     .commits-modal-overlay {
@@ -269,23 +307,23 @@
       flex-shrink: 0;
     }
 
-    /* Markdown rendering */
-    .feedback h1 { font-size: 1rem; font-weight: 600; color: #f0f6fc; margin: 12px 0 6px; }
-    .feedback h2 { font-size: 0.9rem; font-weight: 600; color: #e6edf3; margin: 10px 0 5px; }
-    .feedback h3 { font-size: 0.85rem; font-weight: 600; color: #c9d1d9; margin: 8px 0 4px; }
-    .feedback strong { color: #e6edf3; font-weight: 600; }
-    .feedback em { font-style: italic; color: #c9d1d9; }
-    .feedback code { background: #21262d; color: #79c0ff; padding: 1px 5px; border-radius: 4px; font-family: "SF Mono", "Fira Code", monospace; font-size: 0.8rem; }
-    .feedback pre { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 10px 12px; margin: 8px 0; overflow-x: auto; }
-    .feedback pre code { background: transparent; color: #c9d1d9; padding: 0; font-size: 0.78rem; }
-    .feedback ul, .feedback ol { padding-left: 20px; margin: 6px 0; }
-    .feedback li { margin: 3px 0; }
-    .feedback hr { border: none; border-top: 1px solid #30363d; margin: 10px 0; }
-    .feedback p { margin: 6px 0; }
-    .feedback table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 0.8rem; }
-    .feedback th { background: #21262d; color: #e6edf3; padding: 6px 10px; text-align: left; border: 1px solid #30363d; }
-    .feedback td { padding: 5px 10px; border: 1px solid #30363d; color: #c9d1d9; }
-    .feedback tr:nth-child(even) td { background: #161b22; }
+    /* Full review modal markdown */
+    .review-md h1 { font-size: 1rem; font-weight: 600; color: #f0f6fc; margin: 12px 0 6px; }
+    .review-md h2 { font-size: 0.9rem; font-weight: 600; color: #e6edf3; margin: 10px 0 5px; }
+    .review-md h3 { font-size: 0.85rem; font-weight: 600; color: #c9d1d9; margin: 8px 0 4px; }
+    .review-md strong { color: #e6edf3; font-weight: 600; }
+    .review-md em { font-style: italic; color: #c9d1d9; }
+    .review-md code { background: #21262d; color: #79c0ff; padding: 1px 5px; border-radius: 4px; font-family: "SF Mono", "Fira Code", monospace; font-size: 0.8rem; }
+    .review-md pre { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 10px 12px; margin: 8px 0; overflow-x: auto; }
+    .review-md pre code { background: transparent; color: #c9d1d9; padding: 0; font-size: 0.78rem; }
+    .review-md ul, .review-md ol { padding-left: 20px; margin: 6px 0; }
+    .review-md li { margin: 3px 0; }
+    .review-md hr { border: none; border-top: 1px solid #30363d; margin: 10px 0; }
+    .review-md p { margin: 6px 0; }
+    .review-md table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 0.8rem; }
+    .review-md th { background: #21262d; color: #e6edf3; padding: 6px 10px; text-align: left; border: 1px solid #30363d; }
+    .review-md td { padding: 5px 10px; border: 1px solid #30363d; color: #c9d1d9; }
+    .review-md tr:nth-child(even) td { background: #161b22; }
 
     .card-footer { padding: 10px 20px; display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid #21262d; }
 
@@ -453,6 +491,19 @@
   </div>
 </div>
 
+<!-- Full review modal -->
+<div class="modal-overlay" id="review-modal" onclick="closeReviewModal(event)">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="review-modal-title">Full Review</div>
+      <button class="modal-close" onclick="closeReviewModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="review-md" id="review-modal-content"></div>
+    </div>
+  </div>
+</div>
+
 <!-- Commits modal -->
 <div class="commits-modal-overlay" id="commits-modal">
   <div class="commits-modal">
@@ -615,16 +666,13 @@
         ? `<div class="card-body">
              <p class="failed-message">The review agent failed for this PR. Check the log for details.</p>
            </div>`
-        : `<div class="card-body">
+        : `<div class="card-body feedback-preview" data-review-idx="${i}" onclick="openReviewModalByIdx(this)">
              <div class="feedback-label">Agent Feedback</div>
-             <div class="feedback" id="feedback-${i}">${renderMarkdown(r.feedback)}</div>
+             ${renderFeedbackPreview(r.feedback)}
+             <div class="feedback-click-hint">Click to read full review →</div>
            </div>`;
 
-      const cardFooter = failed
-        ? ``
-        : `<div class="card-footer">
-             <button class="btn-ghost" onclick="toggleExpand(${i}, this)">Expand</button>
-           </div>`;
+      const cardFooter = ``;
 
       return `
         <div class="${cardClass}" id="card-${i}">
@@ -647,10 +695,95 @@
     }).join("");
   }
 
-  function toggleExpand(i, btn) {
-    const el = document.getElementById(`feedback-${i}`);
-    const expanded = el.classList.toggle("expanded");
-    btn.textContent = expanded ? "Collapse" : "Expand";
+  function parseFeedbackSections(raw) {
+    const sections = {};
+    const lines = raw.split('\n');
+    let currentSection = null;
+    let currentContent = [];
+    for (const line of lines) {
+      const m = line.match(/^#{1,3}\s+(.+)$/);
+      if (m) {
+        if (currentSection) sections[currentSection.toLowerCase()] = currentContent.join('\n').trim();
+        currentSection = m[1].trim();
+        currentContent = [];
+      } else if (currentSection) {
+        currentContent.push(line);
+      }
+    }
+    if (currentSection) sections[currentSection.toLowerCase()] = currentContent.join('\n').trim();
+    return sections;
+  }
+
+  function verdictChip(text) {
+    if (!text) return '';
+    const t = text.toLowerCase();
+    let cls = 'verdict-neutral';
+    if (/approve|lgtm|looks good/i.test(t)) cls = 'verdict-approve';
+    else if (/change|request|revise|update/i.test(t)) cls = 'verdict-changes';
+    else if (/reject|block|deny/i.test(t)) cls = 'verdict-reject';
+    return `<span class="verdict-chip ${cls}">${escHtml(text.split('\n')[0].trim())}</span>`;
+  }
+
+  function renderFeedbackPreview(raw) {
+    const sections = parseFeedbackSections(raw);
+    const verdict = sections['verdict'] || sections['decision'] || sections['recommendation'] || '';
+    const summary = sections['summary'] || sections['overview'] || sections['tldr'] || sections['tl;dr'] || '';
+    let html = '';
+    if (verdict) {
+      html += `<div class="feedback-section">
+        <div class="feedback-section-label">Verdict</div>
+        <div class="feedback-section-body">${verdictChip(verdict)}</div>
+      </div>`;
+    }
+    if (summary) {
+      html += `<div class="feedback-section">
+        <div class="feedback-section-label">Summary</div>
+        <div class="feedback-section-body">${renderInlineMarkdown(summary)}</div>
+      </div>`;
+    }
+    if (!verdict && !summary) {
+      const firstPara = raw.split(/\n\n/)[0].trim().slice(0, 300);
+      html += `<div class="feedback-section">
+        <div class="feedback-section-body">${renderInlineMarkdown(firstPara)}</div>
+      </div>`;
+    }
+    return html;
+  }
+
+  function renderInlineMarkdown(raw) {
+    const escaped = String(raw).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    return escaped
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.+?)\*/g, '<em>$1</em>')
+      .replace(/((?:^[ \t]*[-*] .+\n?)+)/gm, (block) => {
+        const items = block.trim().split('\n').map(l => `<li>${l.replace(/^[ \t]*[-*] /, '')}</li>`).join('');
+        return `<ul>${items}</ul>`;
+      })
+      .replace(/\n\n+/g, '</p><p>')
+      .replace(/^(?!<[a-z])(.+)$/gm, line => line)
+      .replace(/^(?!<(?:ul|ol|li|pre|p))(.+)$/gm, '<p>$1</p>');
+  }
+
+  function openReviewModalByIdx(el) {
+    const idx = parseInt(el.getAttribute('data-review-idx'), 10);
+    const r = filteredReviews[idx];
+    if (!r) return;
+    openReviewModal(r.title, r.feedback);
+  }
+
+  function openReviewModal(title, feedback) {
+    document.getElementById('review-modal-title').textContent = title;
+    document.getElementById('review-modal-content').innerHTML = renderMarkdown(feedback);
+    document.getElementById('review-modal').classList.add('visible');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeReviewModal(e) {
+    if (e && e.target !== document.getElementById('review-modal')) return;
+    document.getElementById('review-modal').classList.remove('visible');
+    document.body.style.overflow = '';
   }
 
   function openAll() {
@@ -791,7 +924,7 @@
       const res = await fetch(`/api/reviews/${encodeURIComponent(id)}`, { method: "DELETE" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       reviews = reviews.filter(r => r.id !== id);
-      setTimeout(() => { renderSummary(); renderCards(); }, 220);
+      setTimeout(() => { renderSummary(); applyControls(); }, 220);
     } catch (err) {
       card.classList.remove("removing");
       showError(`Could not dismiss review: ${err.message}`);
