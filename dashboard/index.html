@@ -142,6 +142,87 @@
 
     .controls-divider { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
 
+    .settings-wrap { position: relative; margin-left: auto; }
+
+    .settings-gear {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--ink-mute);
+      padding: 6px 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 1px 2px rgba(31,35,51,0.04);
+      transition: color 0.15s, border-color 0.15s, transform 0.25s ease;
+    }
+
+    .settings-gear:hover { color: var(--accent-deep); border-color: var(--accent); }
+    .settings-gear.open { color: var(--accent-deep); border-color: var(--accent); transform: rotate(60deg); }
+
+    .settings-dropdown {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 10px);
+      width: 240px;
+      background: var(--panel);
+      border-radius: 12px;
+      box-shadow: var(--shadow-lift);
+      padding: 14px 16px;
+      z-index: 50;
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(-8px);
+      transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s;
+    }
+
+    .settings-dropdown.open { opacity: 1; visibility: visible; transform: translateY(0); }
+
+    .settings-dropdown::before {
+      content: "";
+      position: absolute;
+      top: -5px;
+      right: 12px;
+      width: 10px;
+      height: 10px;
+      background: var(--panel);
+      transform: rotate(45deg);
+      border-radius: 2px;
+    }
+
+    .settings-title {
+      font-size: 0.6rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+      color: var(--ink-faint);
+      margin-bottom: 12px;
+    }
+
+    .settings-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .settings-label { font-size: 0.8rem; font-weight: 500; color: var(--ink); }
+
+    .settings-row select {
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--ink);
+      font-size: 0.75rem;
+      font-weight: 500;
+      padding: 5px 8px;
+      cursor: pointer;
+      outline: none;
+      font-family: inherit;
+    }
+
+    .settings-row select:hover { border-color: var(--accent); }
+
     .pr-number { display: none; }
 
     .summary-bar {
@@ -605,7 +686,6 @@
     <div class="meta" id="refreshed-at"></div>
   </div>
   <div class="actions">
-    <button class="btn-danger" id="btn-theme" onclick="cycleTheme()" title="Theme: follows system unless pinned">Auto</button>
     <button class="btn-danger" id="btn-clear-all" onclick="confirmClearAll()" style="display:none">Clear All</button>
     <button class="btn-primary" id="btn-open-all" onclick="openAll()" style="display:none">Open All</button>
   </div>
@@ -657,6 +737,22 @@
     <option value="merged">Merged</option>
     <option value="closed">Closed</option>
   </select>
+  <div class="settings-wrap">
+    <button class="settings-gear" id="settings-gear" onclick="toggleSettings(event)" title="Settings" aria-label="Settings" aria-expanded="false">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+    </button>
+    <div class="settings-dropdown" id="settings-dropdown">
+      <div class="settings-title">Settings</div>
+      <div class="settings-row">
+        <label class="settings-label" for="theme-select">Theme</label>
+        <select id="theme-select" onchange="setTheme(this.value)">
+          <option value="auto">Auto (system)</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div class="cards" id="cards" style="display:none"></div>
@@ -706,28 +802,49 @@
   let reviews = [];
 
   // ── Theme: "auto" follows system; "light"/"dark" pin it ──
-  const THEME_LABELS = { auto: "Auto", light: "Light", dark: "Dark" };
-
   function applyTheme(theme) {
     if (theme === "light" || theme === "dark") {
       document.documentElement.dataset.theme = theme;
     } else {
       delete document.documentElement.dataset.theme;
     }
-    const btn = document.getElementById("btn-theme");
-    if (btn) btn.textContent = THEME_LABELS[theme] || "Auto";
+    const select = document.getElementById("theme-select");
+    if (select) select.value = theme;
   }
 
-  function cycleTheme() {
-    const order = ["auto", "light", "dark"];
-    const current = localStorage.getItem("theme") || "auto";
-    const next = order[(order.indexOf(current) + 1) % order.length];
-    if (next === "auto") localStorage.removeItem("theme");
-    else localStorage.setItem("theme", next);
-    applyTheme(next);
+  function setTheme(theme) {
+    if (theme === "auto") localStorage.removeItem("theme");
+    else localStorage.setItem("theme", theme);
+    applyTheme(theme);
   }
 
   applyTheme(localStorage.getItem("theme") || "auto");
+
+  // ── Settings dropdown ──
+  function toggleSettings(e) {
+    e.stopPropagation();
+    const dropdown = document.getElementById("settings-dropdown");
+    const gear = document.getElementById("settings-gear");
+    const open = dropdown.classList.toggle("open");
+    gear.classList.toggle("open", open);
+    gear.setAttribute("aria-expanded", String(open));
+  }
+
+  function closeSettings() {
+    document.getElementById("settings-dropdown").classList.remove("open");
+    const gear = document.getElementById("settings-gear");
+    gear.classList.remove("open");
+    gear.setAttribute("aria-expanded", "false");
+  }
+
+  document.addEventListener("click", (e) => {
+    const wrap = e.target.closest(".settings-wrap");
+    if (!wrap) closeSettings();
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeSettings();
+  });
 
   function timeAgo(isoString) {
     const diff = Date.now() - new Date(isoString).getTime();
