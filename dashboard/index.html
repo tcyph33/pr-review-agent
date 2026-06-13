@@ -287,8 +287,7 @@
       position: relative;
     }
 
-    .card-title-wrap { min-width: 0; flex: 1; padding-right: 40px; }
-    .verdict-slot { flex-shrink: 0; margin-top: 2px; padding-right: 56px; }
+    .card-title-wrap { min-width: 0; flex: 1; padding-right: 56px; }
 
     .card-title { font-size: 1.02rem; font-weight: 650; color: var(--ink); text-decoration: none; line-height: 1.4; letter-spacing: -0.01em; }
     .card-title:hover { color: var(--accent-deep); }
@@ -519,27 +518,6 @@
       display: none;
     }
 
-    .confirm-banner {
-      background: var(--panel);
-      border-radius: 12px;
-      border-left: 3px solid var(--bad);
-      box-shadow: var(--shadow);
-      padding: 14px 18px;
-      font-size: 0.85rem;
-      margin-bottom: 24px;
-      display: none;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      flex-wrap: wrap;
-    }
-
-    .confirm-banner.visible { display: flex; }
-    .confirm-banner span { color: var(--ink-body); }
-    .confirm-banner .confirm-actions { display: flex; gap: 8px; }
-    .confirm-banner .btn-danger { background: var(--bad-tint); color: var(--bad); border: 1px solid var(--bad-border); }
-    .confirm-banner .btn-danger:hover { background: var(--bad-tint-hover); }
-
     /* ── Log + review modal ── */
     .modal-overlay {
       display: none;
@@ -670,20 +648,11 @@
     <div class="meta" id="refreshed-at"></div>
   </div>
   <div class="actions">
-    <button class="btn-danger" id="btn-clear-all" onclick="confirmClearAll()" style="display:none">Clear All</button>
-    <button class="btn-primary" id="btn-open-all" onclick="openAll()" style="display:none">Open All</button>
   </div>
 </header>
 
 <div class="error-banner" id="error-banner"></div>
 
-<div class="confirm-banner" id="confirm-banner">
-  <span>Remove all reviews? This cannot be undone.</span>
-  <div class="confirm-actions">
-    <button class="btn-ghost" onclick="cancelClearAll()">Cancel</button>
-    <button class="btn-danger" onclick="clearAll()">Yes, clear all</button>
-  </div>
-</div>
 
 <div id="loading-screen" style="text-align:center;padding:80px 24px;color:#8b949e;">
   <div style="font-size:1.1rem;color:#c9d1d9;margin-bottom:8px;">Loading reviews...</div>
@@ -918,8 +887,6 @@
     const container = document.getElementById("cards");
     const hasReviews = reviews.length > 0;
 
-    document.getElementById("btn-open-all").style.display   = hasReviews ? "" : "none";
-    document.getElementById("btn-clear-all").style.display  = hasReviews ? "" : "none";
     document.getElementById("controls-bar").style.display   = hasReviews ? "" : "none";
 
     if (!hasReviews) {
@@ -956,7 +923,7 @@
         : `${escHtml(r.repo)} · @${escHtml(r.author)} · ${r.filesChanged} file${r.filesChanged !== 1 ? "s" : ""} · <span class="diff-add">+${r.additions}</span> <span class="diff-del">−${r.deletions}</span> · ${prAgeDays(r) === 1 ? '1 day old' : prAgeDays(r) + ' days old'}`;
 
       const statusPills = failed
-        ? ``
+        ? `<span class="badge badge-failed">Review Failed</span>`
         : `${reviewStateBadge(r.reviewState || "PENDING")}
            ${(() => {
              const wd = waitingDays(r);
@@ -966,10 +933,6 @@
            })()}
            ${(r.newCommits && r.newCommits.length > 0) ? `<span class="badge badge-commits" data-id="${escHtml(r.id)}" data-commits="${escHtml(JSON.stringify(r.newCommits || []))}" onclick="showCommitsFromBadge(this)">↑ ${r.newCommits.length} new commit${r.newCommits.length !== 1 ? 's' : ''}</span>` : ''}
            ${prStatusBadge(r.prStatus)}`;
-
-      const verdictSlot = failed
-        ? `<span class="badge badge-failed">Review Failed</span>`
-        : verdictChipFromFeedback(r.feedback);
 
       const cardBody = failed
         ? `<div class="card-body">
@@ -998,9 +961,8 @@
             <div class="card-title-wrap">
               <a class="${titleClass}" href="${r.url}" target="_blank">${escHtml(r.title)} <span class="title-arrow">↗</span></a>
               <div class="meta-line">${metaLine}</div>
-              ${failed ? "" : `<div class="card-meta">${statusPills}</div>`}
+              <div class="card-meta">${statusPills}</div>
             </div>
-            <div class="verdict-slot">${verdictSlot}</div>
           </div>
           ${cardBody}
           ${cardFooter}
@@ -1038,12 +1000,6 @@
     return `<span class="verdict-chip ${cls}">${escHtml(text.split('\n')[0].trim())}</span>`;
   }
 
-  function verdictChipFromFeedback(raw) {
-    const sections = parseFeedbackSections(raw);
-    const verdict = sections['verdict'] || sections['decision'] || sections['recommendation'] || '';
-    return verdictChip(verdict);
-  }
-
   function renderFeedbackPreview(raw) {
     const sections = parseFeedbackSections(raw);
     const summary = sections['summary'] || sections['overview'] || sections['tldr'] || sections['tl;dr']
@@ -1077,7 +1033,14 @@
 
   function openReviewModal(title, feedback) {
     document.getElementById('review-modal-title').textContent = title;
-    document.getElementById('review-modal-content').innerHTML = renderMarkdown(feedback);
+    const content = document.getElementById('review-modal-content');
+    content.innerHTML = renderMarkdown(feedback);
+    // Render the verdict value as a colored chip, matching the card header
+    content.querySelectorAll('h1, h2, h3').forEach(h => {
+      if (!/^(verdict|decision|recommendation)$/i.test(h.textContent.trim())) return;
+      const next = h.nextElementSibling;
+      if (next && next.tagName === 'P') next.innerHTML = verdictChip(next.textContent.trim());
+    });
     document.getElementById('review-modal').classList.add('visible');
     document.body.style.overflow = 'hidden';
   }
@@ -1086,10 +1049,6 @@
     if (e && e.target !== document.getElementById('review-modal')) return;
     document.getElementById('review-modal').classList.remove('visible');
     document.body.style.overflow = '';
-  }
-
-  function openAll() {
-    filteredReviews.filter(r => r.reviewStatus !== "failed").forEach(r => window.open(r.url, "_blank"));
   }
 
   function prStatusBadge(status) {
@@ -1230,26 +1189,6 @@
     } catch (err) {
       card.classList.remove("removing");
       showError(`Could not dismiss review: ${err.message}`);
-    }
-  }
-
-  function confirmClearAll() {
-    document.getElementById("confirm-banner").classList.add("visible");
-  }
-
-  function cancelClearAll() {
-    document.getElementById("confirm-banner").classList.remove("visible");
-  }
-
-  async function clearAll() {
-    cancelClearAll();
-    try {
-      const res = await fetch("/api/reviews", { method: "DELETE" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      reviews = [];
-      applyControls();
-    } catch (err) {
-      showError(`Could not clear reviews: ${err.message}`);
     }
   }
 
