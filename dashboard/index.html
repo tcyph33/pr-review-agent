@@ -100,8 +100,6 @@
     .btn-danger:hover { background: rgba(255,255,255,0.22); }
     .btn-ghost     { background: var(--panel); color: var(--ink-mute); border: 1px solid var(--line); font-size: 0.72rem; padding: 6px 12px; }
     .btn-ghost:hover { color: var(--accent-deep); border-color: var(--accent); }
-    .btn-dismiss   { background: var(--panel); color: var(--ink-faint); border: 1px solid var(--line); font-size: 0.7rem; padding: 4px 10px; }
-    .btn-dismiss:hover { color: var(--bad); border-color: var(--bad-border); background: var(--bad-tint); }
     .btn-claude    { background: var(--accent-tint); color: var(--accent-deep); border: 1px solid var(--accent-border); font-size: 0.7rem; padding: 4px 10px; }
     .btn-claude:hover { background: var(--accent-tint-hover); }
     .btn-log       { background: var(--panel); color: var(--ink-mute); border: 1px solid var(--line); font-size: 0.7rem; padding: 4px 10px; }
@@ -271,15 +269,11 @@
     .card-closed { opacity: 0.6; }
 
     .ghost-number {
-      position: absolute;
-      top: 14px;
-      right: 18px;
       font-size: 0.68rem;
       font-weight: 700;
       letter-spacing: 0.06em;
       color: var(--ink-faint);
-      opacity: 0.55;
-      pointer-events: none;
+      opacity: 0.7;
       user-select: none;
       font-family: var(--mono);
     }
@@ -288,11 +282,13 @@
       display: flex;
       align-items: flex-start;
       justify-content: space-between;
-      padding: 22px 24px 14px;
-      gap: 12px;
-      flex-wrap: wrap;
+      padding: 22px 24px 16px;
+      gap: 14px;
       position: relative;
     }
+
+    .card-title-wrap { min-width: 0; flex: 1; padding-right: 40px; }
+    .verdict-slot { flex-shrink: 0; margin-top: 2px; padding-right: 56px; }
 
     .card-title { font-size: 1.02rem; font-weight: 650; color: var(--ink); text-decoration: none; line-height: 1.4; letter-spacing: -0.01em; }
     .card-title:hover { color: var(--accent-deep); }
@@ -309,78 +305,74 @@
       color: var(--ink-mute);
       display: inline-flex;
       align-items: center;
-      gap: 5px;
     }
 
-    .badge::before {
-      content: "";
-      width: 5px;
-      height: 5px;
-      border-radius: 50%;
-      background: var(--ink-faint);
-      flex-shrink: 0;
-    }
-
-    .badge-repo::before, .badge-time::before, .badge-files::before { display: none; }
-    .badge-repo, .badge-time, .badge-files { font-family: var(--mono); font-weight: 500; font-size: 0.64rem; }
-
-    .badge-author { background: var(--accent-tint); color: var(--accent-deep); }
-    .badge-author::before { background: var(--accent); }
-    .badge-add { background: var(--good-tint); color: var(--good); }
-    .badge-add::before { display: none; }
-    .badge-del { background: var(--bad-tint); color: var(--bad); }
-    .badge-del::before { display: none; }
-    .badge-add, .badge-del { font-family: var(--mono); font-weight: 600; font-size: 0.64rem; }
     .badge-failed { background: var(--bad-tint); color: var(--bad); }
-    .badge-failed::before { background: var(--bad); }
-    .badge-waiting-low { background: var(--panel-2); color: var(--ink-mute); }
     .badge-waiting-medium { background: var(--warn-tint); color: var(--warn); }
-    .badge-waiting-medium::before { background: var(--warn); }
     .badge-waiting-high { background: var(--bad-tint); color: var(--bad); }
-    .badge-waiting-high::before { background: var(--bad); }
     .badge-commits { background: var(--accent-tint); color: var(--accent-deep); cursor: pointer; }
-    .badge-commits::before { background: var(--accent); }
     .badge-commits:hover { background: var(--accent-tint-hover); }
     .badge-state-pending { background: var(--panel-2); color: var(--ink-mute); }
     .badge-state-commented { background: var(--accent-tint); color: var(--accent-deep); }
-    .badge-state-commented::before { background: var(--accent); }
     .badge-state-changes { background: var(--warn-tint); color: var(--warn); }
-    .badge-state-changes::before { background: var(--warn); }
     .badge-state-approved { background: var(--good-tint); color: var(--good); }
-    .badge-state-approved::before { background: var(--good); }
     .badge-status-open { display: none; }
     .badge-status-merged { background: var(--accent-tint); color: var(--accent-deep); }
-    .badge-status-merged::before { background: var(--accent); }
     .badge-status-closed { background: var(--panel-2); color: var(--ink-faint); }
 
-    .card-actions { display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; position: relative; z-index: 1; margin-top: 18px; }
+    .meta-line {
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      color: var(--ink-faint);
+      margin-top: 8px;
+      word-break: break-word;
+    }
 
-    .card-body { border-top: 1px solid var(--line-soft); padding: 18px 24px 16px; }
+    .diff-add { color: var(--good); }
+    .diff-del { color: var(--bad); }
+
+    .title-arrow {
+      font-size: 0.8em;
+      color: var(--ink-faint);
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+
+    .card:hover .title-arrow { opacity: 1; }
+
+    .card-top-right {
+      position: absolute;
+      top: 14px;
+      right: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      z-index: 2;
+    }
+
+    .card-x {
+      background: transparent;
+      border: none;
+      color: var(--ink-faint);
+      font-size: 0.85rem;
+      line-height: 1;
+      padding: 4px 6px;
+      border-radius: 6px;
+      opacity: 0;
+      transition: opacity 0.15s, color 0.15s, background 0.15s;
+    }
+
+    .card:hover .card-x { opacity: 1; }
+    .card-x:hover { color: var(--bad); background: var(--bad-tint); }
+
+    .card-body { border-top: 1px solid var(--line-soft); padding: 16px 24px; }
 
     .failed-message { font-size: 0.85rem; color: var(--ink-mute); font-style: italic; }
-
-    .feedback-label {
-      font-size: 0.6rem;
-      text-transform: uppercase;
-      letter-spacing: 0.18em;
-      color: var(--accent-deep);
-      margin-bottom: 12px;
-      font-weight: 700;
-    }
 
     .feedback-preview { cursor: pointer; }
     .feedback-preview:hover .feedback-click-hint { color: var(--accent-deep); }
 
     .feedback-section { margin-bottom: 12px; }
-    .feedback-section-label {
-      font-size: 0.58rem;
-      text-transform: uppercase;
-      letter-spacing: 0.16em;
-      color: var(--ink-faint);
-      font-weight: 700;
-      margin-bottom: 5px;
-    }
-
     .feedback-section-body {
       font-size: 0.85rem;
       line-height: 1.65;
@@ -399,7 +391,6 @@
     .verdict-chip {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
       font-size: 0.66rem;
       font-weight: 700;
       text-transform: uppercase;
@@ -407,34 +398,26 @@
       padding: 4px 12px;
       border-radius: 20px;
       background: var(--panel-2);
-    }
-
-    .verdict-chip::before {
-      content: "";
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
       flex-shrink: 0;
     }
 
     .verdict-approve { background: var(--good-tint); color: var(--good); }
-    .verdict-approve::before { background: var(--good); }
     .verdict-changes { background: var(--warn-tint); color: var(--warn); }
-    .verdict-changes::before { background: var(--warn); }
     .verdict-reject { background: var(--bad-tint); color: var(--bad); }
-    .verdict-reject::before { background: var(--bad); }
     .verdict-neutral { color: var(--ink-mute); }
-    .verdict-neutral::before { background: var(--ink-faint); }
 
-    .feedback-click-hint {
+    .read-more {
       font-size: 0.62rem;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.14em;
       color: var(--ink-faint);
-      margin-top: 12px;
+      cursor: pointer;
       transition: color 0.15s;
+      white-space: nowrap;
     }
+
+    .read-more:hover { color: var(--accent-deep); }
 
     /* Commit modal */
     .commits-modal-overlay {
@@ -517,7 +500,8 @@
     .review-md td { padding: 5px 10px; border: 1px solid var(--line); color: var(--ink-body); }
     .review-md tr:nth-child(even) td { background: var(--code-bg); }
 
-    .card-footer { padding: 10px 24px; display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--line-soft); }
+    .card-footer { padding: 12px 24px; display: flex; justify-content: space-between; align-items: center; gap: 8px; border-top: 1px solid var(--line-soft); }
+    .footer-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 
     .empty { text-align: center; padding: 80px 24px; color: var(--ink-mute); grid-column: 1 / -1; }
     .empty h2 { font-size: 1.1rem; margin-bottom: 8px; color: var(--ink); }
@@ -867,17 +851,19 @@
   }
 
   function renderSummary() {
-    const bar    = document.getElementById("summary-bar");
-    const open   = reviews.filter(r => !r.prStatus || r.prStatus === "open");
-    const repos  = new Set(open.map(r => r.repo)).size;
-    const ages   = open.map(r => prAgeDays(r));
-    const oldest = ages.length ? Math.max(...ages) : 0;
-    const avg    = ages.length ? Math.round(ages.reduce((s,a) => s+a, 0) / ages.length) : 0;
+    const bar      = document.getElementById("summary-bar");
+    const open     = filteredReviews.filter(r => !r.prStatus || r.prStatus === "open");
+    const approved = open.filter(r => r.reviewState === "APPROVED").length;
+    const stale    = open.filter(r => { const wd = waitingDays(r); return wd !== null && wd >= 3; }).length;
+    const rereview = open.filter(r => r.newCommits && r.newCommits.length > 0).length;
+    const ages     = open.map(r => prAgeDays(r));
+    const oldest   = ages.length ? Math.max(...ages) : 0;
     bar.innerHTML = `
-      <div class="stat"><div class="stat-value">${open.length}</div><div class="stat-label">PRs Pending</div></div>
-      <div class="stat"><div class="stat-value">${repos}</div><div class="stat-label">Repos</div></div>
+      <div class="stat"><div class="stat-value">${open.length}</div><div class="stat-label">Open PRs</div></div>
+      <div class="stat"><div class="stat-value">${approved}</div><div class="stat-label">Approved</div></div>
+      <div class="stat ${stale > 0 ? 'stat-warn' : ''}"><div class="stat-value">${stale}</div><div class="stat-label">Waiting 3+ Days</div></div>
+      <div class="stat ${rereview > 0 ? 'stat-warn' : ''}"><div class="stat-value">${rereview}</div><div class="stat-label">New Commits</div></div>
       <div class="stat ${oldest >= 7 ? 'stat-warn' : ''}"><div class="stat-value">${oldest === 1 ? '1 day' : oldest + ' days'}</div><div class="stat-label">Oldest PR</div></div>
-      <div class="stat"><div class="stat-value">${avg === 1 ? '1 day' : avg + ' days'}</div><div class="stat-label">Avg PR Age</div></div>
     `;
   }
 
@@ -925,6 +911,7 @@
     });
 
     renderCards();
+    renderSummary();
   }
 
   function renderCards() {
@@ -964,54 +951,56 @@
 
       const titleClass = failed ? "card-title card-title-failed" : "card-title";
 
-      const metaBadges = failed
-        ? `<span class="badge badge-repo">${escHtml(r.repo)}</span>
-           <span class="badge badge-author">@${escHtml(r.author)}</span>
-           <span class="badge badge-time">${timeAgo(r.reviewedAt)}</span>
-           <span class="badge badge-failed">⚠ Review Failed</span>`
-        : `<span class="badge badge-repo">${escHtml(r.repo)}</span>
-           <span class="badge badge-author">@${escHtml(r.author)}</span>
-           <span class="badge badge-files">${r.filesChanged} file${r.filesChanged !== 1 ? "s" : ""}</span>
-           <span class="badge badge-add">+${r.additions}</span>
-           <span class="badge badge-del">-${r.deletions}</span>
-           <span class="badge badge-time">${prAgeDays(r) === 1 ? '1 day old' : prAgeDays(r) + ' days old'}</span>
+      const metaLine = failed
+        ? `${escHtml(r.repo)} · @${escHtml(r.author)} · reviewed ${timeAgo(r.reviewedAt)}`
+        : `${escHtml(r.repo)} · @${escHtml(r.author)} · ${r.filesChanged} file${r.filesChanged !== 1 ? "s" : ""} · <span class="diff-add">+${r.additions}</span> <span class="diff-del">−${r.deletions}</span> · ${prAgeDays(r) === 1 ? '1 day old' : prAgeDays(r) + ' days old'}`;
+
+      const statusPills = failed
+        ? ``
+        : `${reviewStateBadge(r.reviewState || "PENDING")}
            ${(() => {
              const wd = waitingDays(r);
-             if (wd === null) return '';
-             const cls = wd >= 5 ? 'badge-waiting-high' : wd >= 3 ? 'badge-waiting-medium' : 'badge-waiting-low';
-             const label = wd === 1 ? 'Waiting 1 day' : `Waiting ${wd} days`;
-             return `<span class="badge ${cls}">${label}</span>`;
+             if (wd === null || wd < 3) return '';
+             const cls = wd >= 5 ? 'badge-waiting-high' : 'badge-waiting-medium';
+             return `<span class="badge ${cls}">Waiting ${wd} days</span>`;
            })()}
-           ${reviewStateBadge(r.reviewState || "PENDING")}
            ${(r.newCommits && r.newCommits.length > 0) ? `<span class="badge badge-commits" data-id="${escHtml(r.id)}" data-commits="${escHtml(JSON.stringify(r.newCommits || []))}" onclick="showCommitsFromBadge(this)">↑ ${r.newCommits.length} new commit${r.newCommits.length !== 1 ? 's' : ''}</span>` : ''}
            ${prStatusBadge(r.prStatus)}`;
+
+      const verdictSlot = failed
+        ? `<span class="badge badge-failed">Review Failed</span>`
+        : verdictChipFromFeedback(r.feedback);
 
       const cardBody = failed
         ? `<div class="card-body">
              <p class="failed-message">The review agent failed for this PR. Check the log for details.</p>
            </div>`
         : `<div class="card-body feedback-preview" data-review-idx="${i}" onclick="openReviewModalByIdx(this)">
-             <div class="feedback-label">Agent Feedback</div>
              ${renderFeedbackPreview(r.feedback)}
-             <div class="feedback-click-hint">Click to read full review →</div>
            </div>`;
 
-      const cardFooter = ``;
+      const cardFooter = `
+        <div class="card-footer">
+          <div class="footer-actions">
+            ${!failed ? `<button class="btn-claude" data-id="${escHtml(r.id)}" onclick="openInClaude(this)">Claude Code</button>` : ""}
+            ${r.logFile ? `<button class="btn-log" data-id="${escHtml(r.id)}" data-title="${escHtml(r.title)}" onclick="viewLog(this)">View Log</button>` : ""}
+          </div>
+          ${!failed ? `<span class="read-more" data-review-idx="${i}" onclick="openReviewModalByIdx(this)">Read full review →</span>` : ""}
+        </div>`;
 
       return `
         <div class="${cardClass}" id="card-${i}">
-          <div class="ghost-number">#${escHtml(String(r.pull_number))}</div>
+          <div class="card-top-right">
+            <span class="ghost-number">#${escHtml(String(r.pull_number))}</span>
+            <button class="card-x" data-id="${escHtml(r.id)}" data-idx="${i}" onclick="dismissReview(this)" title="Dismiss" aria-label="Dismiss review">✕</button>
+          </div>
           <div class="card-header">
-            <div>
-              <a class="${titleClass}" href="${r.url}" target="_blank"><span class="pr-number">#${r.pull_number}</span>${escHtml(r.title)}</a>
-              <div class="card-meta">${metaBadges}</div>
+            <div class="card-title-wrap">
+              <a class="${titleClass}" href="${r.url}" target="_blank">${escHtml(r.title)} <span class="title-arrow">↗</span></a>
+              <div class="meta-line">${metaLine}</div>
+              ${failed ? "" : `<div class="card-meta">${statusPills}</div>`}
             </div>
-            <div class="card-actions">
-              ${!failed ? `<a href="${r.url}" target="_blank"><button class="btn-ghost">Open PR ↗</button></a>` : ""}
-              ${!failed ? `<button class="btn-claude" data-id="${escHtml(r.id)}" onclick="openInClaude(this)">⬡ Claude Code</button>` : ""}
-              ${r.logFile ? `<button class="btn-log" data-id="${escHtml(r.id)}" data-title="${escHtml(r.title)}" onclick="viewLog(this)">View Log</button>` : ""}
-              <button class="btn-dismiss" data-id="${escHtml(r.id)}" data-idx="${i}" onclick="dismissReview(this)">✕ Dismiss</button>
-            </div>
+            <div class="verdict-slot">${verdictSlot}</div>
           </div>
           ${cardBody}
           ${cardFooter}
@@ -1049,30 +1038,17 @@
     return `<span class="verdict-chip ${cls}">${escHtml(text.split('\n')[0].trim())}</span>`;
   }
 
-  function renderFeedbackPreview(raw) {
+  function verdictChipFromFeedback(raw) {
     const sections = parseFeedbackSections(raw);
     const verdict = sections['verdict'] || sections['decision'] || sections['recommendation'] || '';
-    const summary = sections['summary'] || sections['overview'] || sections['tldr'] || sections['tl;dr'] || '';
-    let html = '';
-    if (verdict) {
-      html += `<div class="feedback-section">
-        <div class="feedback-section-label">Verdict</div>
-        <div class="feedback-section-body">${verdictChip(verdict)}</div>
-      </div>`;
-    }
-    if (summary) {
-      html += `<div class="feedback-section">
-        <div class="feedback-section-label">Summary</div>
-        <div class="feedback-section-body">${renderInlineMarkdown(summary)}</div>
-      </div>`;
-    }
-    if (!verdict && !summary) {
-      const firstPara = raw.split(/\n\n/)[0].trim().slice(0, 300);
-      html += `<div class="feedback-section">
-        <div class="feedback-section-body">${renderInlineMarkdown(firstPara)}</div>
-      </div>`;
-    }
-    return html;
+    return verdictChip(verdict);
+  }
+
+  function renderFeedbackPreview(raw) {
+    const sections = parseFeedbackSections(raw);
+    const summary = sections['summary'] || sections['overview'] || sections['tldr'] || sections['tl;dr']
+      || raw.split(/\n\n/)[0].trim().slice(0, 300);
+    return `<div class="feedback-section-body">${renderInlineMarkdown(summary)}</div>`;
   }
 
   function renderInlineMarkdown(raw) {
@@ -1250,7 +1226,7 @@
       const res = await fetch(`/api/reviews/${encodeURIComponent(id)}`, { method: "DELETE" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       reviews = reviews.filter(r => r.id !== id);
-      setTimeout(() => { renderSummary(); applyControls(); }, 220);
+      setTimeout(() => { applyControls(); }, 220);
     } catch (err) {
       card.classList.remove("removing");
       showError(`Could not dismiss review: ${err.message}`);
@@ -1271,8 +1247,7 @@
       const res = await fetch("/api/reviews", { method: "DELETE" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       reviews = [];
-      renderSummary();
-      renderCards();
+      applyControls();
     } catch (err) {
       showError(`Could not clear reviews: ${err.message}`);
     }
@@ -1397,7 +1372,6 @@
       firstLoad = false;
       populateRepoFilter();
       applyControls();
-      renderSummary();
       document.getElementById("refreshed-at").textContent = "Mock data — design preview";
       return;
     }
@@ -1429,7 +1403,6 @@
       const scrollY = window.scrollY;
       populateRepoFilter();
       applyControls();
-      renderSummary();
       window.scrollTo(0, scrollY);
       document.getElementById("refreshed-at").textContent =
         "Last refreshed: " + new Date().toLocaleTimeString();
