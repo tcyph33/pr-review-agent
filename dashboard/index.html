@@ -562,6 +562,36 @@
 
     .diff-nopatch { padding: 10px 12px; font-size: 0.74rem; color: var(--ink-mute); font-style: italic; }
 
+    /* The row a finding points at, highlighted additively so it reads on top of
+       the add/delete tints rather than replacing them. */
+    .diff-row-target .diff-code { box-shadow: inset 3px 0 0 var(--accent); font-weight: 600; }
+
+    /* ── Per-finding diff context ── */
+    .finding-loc-link { cursor: pointer; }
+    .finding-loc-link:hover { color: var(--accent-deep); text-decoration: underline; }
+    .finding-jump { font-size: 0.74em; color: var(--ink-faint); margin-left: 3px; }
+    .finding-loc-link:hover .finding-jump { color: var(--accent-deep); }
+
+    .finding-context { margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--line); }
+
+    .finding-context-toggle {
+      background: transparent;
+      border: none;
+      padding: 0;
+      font-size: 0.6rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.13em;
+      color: var(--ink-faint);
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    .finding-context-toggle:hover { color: var(--accent-deep); }
+
+    .finding-context-body { margin-top: 9px; border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; background: var(--panel); }
+    .finding-context-note { padding: 9px 11px; font-size: 0.74rem; color: var(--ink-mute); font-style: italic; }
+
     .read-more {
       font-size: 0.62rem;
       font-weight: 700;
@@ -1195,6 +1225,8 @@
   const SEVERITY_CLASS = { BLOCKER: "sev-blocker", WARNING: "sev-warning", NIT: "sev-nit" };
   const SEVERITY_LABEL = { BLOCKER: "Blocker",     WARNING: "Warning",     NIT: "Nit" };
 
+  let currentFindings = [];
+
   // Returns { findings, before, after } — prose either side of the block — or
   // null when the block is absent or unparseable, so callers can fall back.
   function parseFindings(raw) {
@@ -1211,48 +1243,65 @@
     };
   }
 
-  function renderFindingCard(f) {
-    const sev     = String(f.severity ?? "").toUpperCase();
-    const cls     = SEVERITY_CLASS[sev] ?? "sev-nit";
-    const label   = SEVERITY_LABEL[sev] ?? (sev ? escHtml(sev) : "Note");
-    const file    = escHtml(f.file ?? "unknown");
-    const hasLine = f.line !== null && f.line !== undefined && f.line !== "";
-    const loc     = hasLine
-      ? `${file}:${escHtml(String(f.line))}`
-      : `${file}<span class="finding-scope">File-level</span>`;
-    const refs = Array.isArray(f.references) && f.references.length > 0
+  function renderFindingCard(finding, index) {
+    const severity      = String(finding.severity ?? "").toUpperCase();
+    const severityClass = SEVERITY_CLASS[severity] ?? "sev-nit";
+    const severityLabel = SEVERITY_LABEL[severity] ?? (severity ? escHtml(severity) : "Note");
+    const filePath      = escHtml(finding.file ?? "unknown");
+    const hasLine       = finding.line !== null && finding.line !== undefined && finding.line !== "";
+
+    // With a line, the location doubles as a jump into the diff pane. Without
+    // one there is nowhere to jump, so it stays plain text.
+    const locationHtml = hasLine
+      ? `<span class="finding-loc finding-loc-link" onclick="jumpToDiffFile(${index})" title="Show this line in the diff">${filePath}:${escHtml(String(finding.line))}<span class="finding-jump">↗</span></span>`
+      : `<span class="finding-loc">${filePath}<span class="finding-scope">File-level</span></span>`;
+
+    const hasReferences = Array.isArray(finding.references) && finding.references.length > 0;
+    const referencesHtml = hasReferences
       ? `<div class="finding-refs">
            <span class="finding-refs-label">Also affects</span>
-           ${f.references.map(r => `<span class="finding-ref">${escHtml(r)}</span>`).join("")}
+           ${finding.references.map((reference) => `<span class="finding-ref">${escHtml(reference)}</span>`).join("")}
          </div>`
       : "";
+
+    const contextHtml = hasLine
+      ? `<div class="finding-context">
+           <button class="finding-context-toggle" id="finding-context-btn-${index}" onclick="toggleFindingContext(${index})">▸ Show diff context</button>
+           <div class="finding-context-body" id="finding-context-${index}" style="display:none"></div>
+         </div>`
+      : "";
+
     return `
       <div class="finding">
         <div class="finding-head">
-          <span class="badge ${cls}">${label}</span>
-          <span class="finding-loc">${loc}</span>
-          ${f.check_id ? `<span class="finding-check">${escHtml(f.check_id)}</span>` : ""}
+          <span class="badge ${severityClass}">${severityLabel}</span>
+          ${locationHtml}
+          ${finding.check_id ? `<span class="finding-check">${escHtml(finding.check_id)}</span>` : ""}
         </div>
-        ${f.title  ? `<div class="finding-title">${escHtml(f.title)}</div>` : ""}
-        ${f.detail ? `<div class="finding-detail">${renderInlineMarkdown(f.detail)}</div>` : ""}
-        ${refs}
+        ${finding.title  ? `<div class="finding-title">${escHtml(finding.title)}</div>` : ""}
+        ${finding.detail ? `<div class="finding-detail">${renderInlineMarkdown(finding.detail)}</div>` : ""}
+        ${referencesHtml}
+        ${contextHtml}
       </div>`;
   }
 
   function renderFindings(findings) {
+    // Held for the context expander and jump handlers, which are keyed by index
+    currentFindings = findings;
+
     if (findings.length === 0) {
       return `<div class="findings-empty">No findings — nothing was flagged on this PR.</div>`;
     }
-    return `<div class="findings">${findings.map(renderFindingCard).join("")}</div>`;
+    return `<div class="findings">${findings.map((finding, index) => renderFindingCard(finding, index)).join("")}</div>`;
   }
 
   function severityRollup(findings) {
     const counts = { BLOCKER: 0, WARNING: 0, NIT: 0 };
-    for (const f of findings) {
-      const k = String(f.severity ?? "").toUpperCase();
-      if (k in counts) counts[k]++;
+    for (const finding of findings) {
+      const severity = String(finding.severity ?? "").toUpperCase();
+      if (severity in counts) counts[severity]++;
     }
-    const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+    const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
     const parts = [];
     if (counts.BLOCKER) parts.push(`<span class="roll roll-blocker">${plural(counts.BLOCKER, "blocker")}</span>`);
     if (counts.WARNING) parts.push(`<span class="roll roll-warning">${plural(counts.WARNING, "warning")}</span>`);
@@ -1270,6 +1319,7 @@
 
   const diffCacheByReviewId = new Map();
   let currentDiffFiles = [];
+  let currentReview = null;
 
   // Tracked in memory with localStorage as a mirror, so the toggle still works
   // when storage is unavailable (private window, blocked site data).
@@ -1318,7 +1368,7 @@
     return rows;
   }
 
-  function renderDiffRows(rows) {
+  function renderDiffRows(rows, highlightNewLine = null) {
     const rowsHtml = rows.map((row) => {
       if (row.type === "hunk") {
         return `<tr class="diff-row-hunk"><td colspan="3">${escHtml(row.text)}</td></tr>`;
@@ -1326,8 +1376,10 @@
       if (row.type === "meta") {
         return `<tr class="diff-row-meta"><td class="diff-ln"></td><td class="diff-ln"></td><td class="diff-code">${escHtml(row.text)}</td></tr>`;
       }
-      const rowClass = row.type === "add" ? "diff-row-add" : row.type === "del" ? "diff-row-del" : "diff-row-ctx";
-      const marker   = row.type === "add" ? "+" : row.type === "del" ? "-" : " ";
+      const baseClass = row.type === "add" ? "diff-row-add" : row.type === "del" ? "diff-row-del" : "diff-row-ctx";
+      const isTarget  = highlightNewLine !== null && row.newLine === highlightNewLine;
+      const rowClass  = isTarget ? `${baseClass} diff-row-target` : baseClass;
+      const marker    = row.type === "add" ? "+" : row.type === "del" ? "-" : " ";
       return `<tr class="${rowClass}" data-new-line="${row.newLine ?? ""}">
           <td class="diff-ln">${row.oldLine ?? ""}</td>
           <td class="diff-ln">${row.newLine ?? ""}</td>
@@ -1346,13 +1398,13 @@
   }
 
   function renderDiffFileRow(file, index) {
-    const status = String(file.status ?? "modified");
-    const letter = DIFF_STATUS_LETTER[status] ?? "M";
+    const status       = String(file.status ?? "modified");
+    const statusLetter = DIFF_STATUS_LETTER[status] ?? "M";
     return `
       <div class="diff-file" id="diff-file-${index}">
         <div class="diff-file-row" onclick="toggleDiffFile(${index})">
           <span class="diff-caret">▸</span>
-          <span class="diff-status diff-status-${escHtml(status)}" title="${escHtml(status)}">${letter}</span>
+          <span class="diff-status diff-status-${escHtml(status)}" title="${escHtml(status)}">${statusLetter}</span>
           <span class="diff-name">${escHtml(file.filename)}</span>
           <span class="diff-counts"><span class="diff-add">+${file.additions ?? 0}</span> <span class="diff-del">−${file.deletions ?? 0}</span></span>
         </div>
@@ -1439,20 +1491,161 @@
     document.getElementById("diff-toggle-btn").textContent = diffPaneHidden ? "Show diff" : "Hide diff";
   }
 
-  function toggleDiffPane() {
-    diffPaneHidden = !diffPaneHidden;
-    try { localStorage.setItem(DIFF_PANE_HIDDEN_KEY, String(diffPaneHidden)); } catch { /* convenience only */ }
+  function setDiffPaneHidden(hidden) {
+    diffPaneHidden = hidden;
+    try { localStorage.setItem(DIFF_PANE_HIDDEN_KEY, String(hidden)); } catch { /* convenience only */ }
     applyDiffPaneVisibility();
   }
 
+  function toggleDiffPane() {
+    setDiffPaneHidden(!diffPaneHidden);
+  }
+
+  // ── Per-finding diff context ──
+  const FINDING_CONTEXT_RADIUS = 4;
+
+  // Locates the diff rows surrounding a finding's line, clamped to the hunk that
+  // contains it so the window never bleeds into an unrelated hunk. Returns null
+  // when the line is not part of any hunk.
+  function findFindingContextRows(file, line) {
+    const rows = parsePatch(file.patch);
+    const targetIndex = rows.findIndex((row) => row.newLine === line);
+
+    const isLineInDiff = targetIndex >= 0;
+    if (!isLineInDiff) return null;
+
+    // Walk back to the governing hunk header and forward to the next one
+    let hunkHeaderIndex = -1;
+    for (let i = targetIndex; i >= 0; i -= 1) {
+      if (rows[i].type === "hunk") { hunkHeaderIndex = i; break; }
+    }
+    let nextHunkIndex = rows.length;
+    for (let i = targetIndex + 1; i < rows.length; i += 1) {
+      if (rows[i].type === "hunk") { nextHunkIndex = i; break; }
+    }
+
+    const windowStart = Math.max(hunkHeaderIndex + 1, targetIndex - FINDING_CONTEXT_RADIUS);
+    const windowEnd   = Math.min(nextHunkIndex, targetIndex + FINDING_CONTEXT_RADIUS + 1);
+    const windowRows  = rows.slice(windowStart, windowEnd);
+
+    // Keep the hunk header for orientation when the window starts below it
+    const needsHeader = hunkHeaderIndex >= 0 && windowStart > hunkHeaderIndex;
+    const contextRows = needsHeader ? [rows[hunkHeaderIndex], ...windowRows] : windowRows;
+    return contextRows;
+  }
+
+  function findingContextNote(message) {
+    return `<div class="finding-context-note">${escHtml(message)}</div>`;
+  }
+
+  function renderFindingContext(diff, finding) {
+    const file = diff.files.find((candidate) => candidate.filename === finding.file);
+
+    // The anchor file can be missing from the diff, or present without a patch
+    if (!file) {
+      const reason = diff.truncated
+        ? `${finding.file} is not among the first ${diff.files.length} files of this PR.`
+        : `${finding.file} is not part of this PR's diff, so there is no hunk to show.`;
+      return findingContextNote(reason);
+    }
+    if (!file.patch) {
+      return findingContextNote(`GitHub provides no patch for ${finding.file} — it is binary or too large.`);
+    }
+
+    const contextRows = findFindingContextRows(file, finding.line);
+    if (contextRows === null) {
+      return findingContextNote(`Line ${finding.line} falls outside the changed hunks of ${finding.file}.`);
+    }
+
+    return renderDiffRows(contextRows, finding.line);
+  }
+
+  async function toggleFindingContext(index) {
+    const finding       = currentFindings[index];
+    const bodyElement   = document.getElementById(`finding-context-${index}`);
+    const buttonElement = document.getElementById(`finding-context-btn-${index}`);
+    if (!finding || !bodyElement) return;
+
+    // Collapsing drops the rendered rows; the diff itself stays cached
+    const isOpen = bodyElement.style.display !== "none";
+    if (isOpen) {
+      bodyElement.style.display = "none";
+      bodyElement.innerHTML = "";
+      buttonElement.textContent = "▸ Show diff context";
+      return;
+    }
+
+    bodyElement.style.display = "";
+    buttonElement.textContent = "▾ Hide diff context";
+    bodyElement.innerHTML = findingContextNote("Loading diff…");
+
+    try {
+      const diff = await fetchDiff(currentReview);
+      bodyElement.innerHTML = renderFindingContext(diff, finding);
+    } catch (err) {
+      bodyElement.innerHTML = findingContextNote(`Could not load the diff: ${err.message}`);
+    }
+  }
+
+  function highlightDiffRow(fileIndex, line) {
+    const hasLine = line !== null && line !== undefined;
+    if (!hasLine) return;
+
+    const fileElement = document.getElementById(`diff-file-${fileIndex}`);
+    if (!fileElement) return;
+
+    const targetRow = fileElement.querySelector(`tr[data-new-line="${line}"]`);
+    if (!targetRow) return;
+
+    // Only one row in the pane carries the highlight at a time
+    document.querySelectorAll(".modal-pane-diff .diff-row-target")
+      .forEach((row) => row.classList.remove("diff-row-target"));
+    targetRow.classList.add("diff-row-target");
+    targetRow.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  async function jumpToDiffFile(index) {
+    const finding = currentFindings[index];
+    if (!finding) return;
+
+    // A collapsed pane has nowhere to scroll to, so reveal it first
+    if (diffPaneHidden) setDiffPaneHidden(false);
+
+    let diff;
+    try {
+      diff = await fetchDiff(currentReview);
+    } catch {
+      toggleFindingContext(index);
+      return;
+    }
+
+    // With no matching file there is nothing to jump to, so fall back to the
+    // inline context, which explains why the anchor cannot be shown
+    const fileIndex = diff.files.findIndex((candidate) => candidate.filename === finding.file);
+    const isFileInDiff = fileIndex >= 0;
+    if (!isFileInDiff) {
+      const bodyElement = document.getElementById(`finding-context-${index}`);
+      const isAlreadyOpen = bodyElement && bodyElement.style.display !== "none";
+      if (!isAlreadyOpen) toggleFindingContext(index);
+      return;
+    }
+
+    const fileElement = document.getElementById(`diff-file-${fileIndex}`);
+    if (!fileElement) return;
+
+    if (!fileElement.classList.contains("open")) toggleDiffFile(fileIndex);
+    highlightDiffRow(fileIndex, finding.line);
+  }
+
   function openReviewModalByIdx(el) {
-    const idx = parseInt(el.getAttribute('data-review-idx'), 10);
-    const r = filteredReviews[idx];
-    if (!r) return;
-    openReviewModal(r);
+    const reviewIndex = parseInt(el.getAttribute('data-review-idx'), 10);
+    const review = filteredReviews[reviewIndex];
+    if (!review) return;
+    openReviewModal(review);
   }
 
   function openReviewModal(review) {
+    currentReview = review;
     document.getElementById('review-modal-title').textContent = review.title;
     const content = document.getElementById('review-modal-content');
     const parsed  = parseFindings(review.feedback);
@@ -1461,10 +1654,12 @@
       : `<div class="findings-notice">Couldn't read structured findings in this review — showing the raw text below.</div>`
         + renderMarkdown(review.feedback);
     // Render the verdict value as a colored chip, matching the card header
-    content.querySelectorAll('h1, h2, h3').forEach(h => {
-      if (!/^(verdict|decision|recommendation)$/i.test(h.textContent.trim())) return;
-      const next = h.nextElementSibling;
-      if (next && next.tagName === 'P') next.innerHTML = verdictChip(next.textContent.trim());
+    content.querySelectorAll('h1, h2, h3').forEach((heading) => {
+      const isVerdictHeading = /^(verdict|decision|recommendation)$/i.test(heading.textContent.trim());
+      if (!isVerdictHeading) return;
+      const valueElement = heading.nextElementSibling;
+      const hasParagraphValue = valueElement && valueElement.tagName === 'P';
+      if (hasParagraphValue) valueElement.innerHTML = verdictChip(valueElement.textContent.trim());
     });
 
     // Reset both panes to the top — the modal element is reused across reviews
