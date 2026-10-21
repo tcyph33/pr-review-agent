@@ -7,15 +7,16 @@
   "scripts": {
     "start": "NODE_USE_SYSTEM_CA=1 npx tsx run-reviews.ts",
     "review": "NODE_USE_SYSTEM_CA=1 npx tsx run-reviews.ts",
-    "server": "NODE_USE_SYSTEM_CA=1 npx tsx server.ts"
+    "server": "NODE_USE_SYSTEM_CA=1 npx tsx server.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@octokit/rest": "^21.0.0",
     "dotenv": "^16.4.0"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
+    "@types/node": "^26.0.0",
     "tsx": "^4.0.0",
-    "typescript": "^5.0.0"
+    "typescript": "^7.0.0"
   }
 }
