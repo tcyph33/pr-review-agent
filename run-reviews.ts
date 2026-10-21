@@ -181,7 +181,14 @@ async function runWithClaudeCode(
     const proc = spawn("bash", [
       "-c",
       `claude --print --system-prompt "$(cat '${skillPath}')" "$(cat '${messagePath}')"`
-    ], { encoding: "utf8" });
+    ]);
+
+    // spawn() takes no encoding option — that belongs to the *Sync variants — so
+    // decode on the streams instead. Node's decoder holds back partial multi-byte
+    // sequences, which stringifying each raw chunk would corrupt; review text is
+    // full of em dashes and arrows, so boundary splits do happen.
+    proc.stdout.setEncoding("utf8");
+    proc.stderr.setEncoding("utf8");
 
     const chunks: string[] = [];
     const errChunks: string[] = [];
