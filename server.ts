@@ -9,9 +9,10 @@ import path from "path";
 import { execSync } from "child_process";
 import { fileURLToPath } from "url";
 import { createOctokit, refreshPRData } from "./lib/github.ts";
+import { loadReviews, saveReviews, deleteReviewLog } from "./lib/storage.ts";
+import type { PRReview } from "./lib/storage.ts";
 
 const __dirname      = path.dirname(fileURLToPath(import.meta.url));
-const RESULTS_PATH   = path.join(__dirname, "results", "reviews.json");
 const DASHBOARD_PATH = path.join(__dirname, "dashboard");
 const PORT           = 3000;
 
@@ -28,52 +29,21 @@ const MIME: Record<string, string> = {
   ".json": "application/json",
 };
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-interface Review {
-  id: string;
-  url: string;
-  title: string;
-  repo: string;
-  pull_number: number;
-  author: string;
-  branch: string;
-  feedback: string;
-  reviewState: string;
-  reviewStatus: string;
-  prStatus: string;
-  prCreatedAt: string;
-  reviewRequestedAt: string | null;
-  triggerType: string;
-  reviewedAt: string;
-  logFile?: string;
-}
-
 // ── Storage ───────────────────────────────────────────────────────────────────
 
-function readReviews(): Review[] {
-  try {
-    return JSON.parse(fs.readFileSync(RESULTS_PATH, "utf8"));
-  } catch {
-    return [];
-  }
-}
-
-function writeReviews(reviews: Review[]): void {
-  // Atomic write — write to temp file then rename to prevent corruption on kill/crash
-  const tmp = RESULTS_PATH + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(reviews, null, 2));
-  fs.renameSync(tmp, RESULTS_PATH);
-}
-
-function findReview(id: string): Review | null {
-  return readReviews().find((r) => r.id === id) ?? null;
-}
-
-function deleteLogFile(review: Review): void {
-  if (!review.logFile) return;
-  const logPath = path.join(__dirname, review.logFile);
-  if (fs.existsSync(logPath)) fs.unlinkSync(logPath);
+/**
+ * Finds a stored review by its id.
+ *
+ * @param reviewId - Review id in `owner/repo#number` form
+ * @returns The matching review, or null when no stored review has that id
+ */
+function findReview(reviewId: string): PRReview | null {
+  const storedReviews: PRReview[] = loadReviews();
+  const matchingReview: PRReview | undefined = storedReviews.find(
+    (review: PRReview) => review.id === reviewId
+  );
+  const foundReview: PRReview | null = matchingReview ?? null;
+  return foundReview;
 }
 
 // ── Claude Code launcher ──────────────────────────────────────────────────────
@@ -102,7 +72,14 @@ async function fetchSkill(): Promise<string> {
   return Buffer.from(json.content.replace(/\n/g, ""), "base64").toString("utf8");
 }
 
-function buildClaudeMessage(review: Review): string {
+/**
+ * Builds the opening message handed to an interactive Claude Code session so it
+ * can answer follow-up questions about an already-completed review.
+ *
+ * @param review - The completed review, whose feedback is quoted verbatim
+ * @returns The message text, naming the existing clone so Claude does not re-clone it
+ */
+function buildClaudeMessage(review: PRReview): string {
   const repoName = review.repo.split("/")[1];
   const cloneDir = `~/PR-Reviews/${repoName}-${review.pull_number}`;
   return [
@@ -118,7 +95,14 @@ function buildClaudeMessage(review: Review): string {
   ].join("\n");
 }
 
-async function launchClaudeCode(review: Review): Promise<void> {
+/**
+ * Opens a Terminal window running Claude Code in the review's cloned repository,
+ * primed with the review skill and the prior feedback.
+ *
+ * @param review - The review to investigate further
+ * @throws {Error} If the host is not macOS, or the review skill cannot be fetched
+ */
+async function launchClaudeCode(review: PRReview): Promise<void> {
   if (os.platform() !== "darwin") {
     throw new Error("Launching Claude Code from the dashboard is currently only supported on macOS");
   }
@@ -174,7 +158,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    const reviews  = readReviews();
+    const reviews: PRReview[] = loadReviews();
     const open     = reviews.filter(r => r.prStatus === "open" || !r.prStatus);
     const username = GITHUB_USERNAME || (await (async () => {
       const { data } = await octokit!.rest.users.getAuthenticated();
@@ -189,20 +173,25 @@ const server = http.createServer(async (req, res) => {
           octokit!, owner, repoName, review.pull_number,
           username, review.commitsSeenAt
         );
-        review.reviewState         = refreshed.reviewState as typeof review.reviewState;
+        review.reviewState         = refreshed.reviewState;
         review.lastReviewSubmittedAt = refreshed.lastReviewSubmittedAt;
         review.prStatus            = refreshed.prStatus;
         review.additions           = refreshed.additions;
         review.deletions           = refreshed.deletions;
         review.filesChanged        = refreshed.filesChanged;
         review.newCommits          = refreshed.newCommits;
+        // reviewedHeadSha is deliberately absent from this list. This endpoint
+        // only re-reads GitHub metadata — the stored feedback still describes
+        // the old commit — so advancing the SHA here would claim the findings
+        // cover code they were never generated against. Only a re-review
+        // updates it, by replacing the whole record.
         updated++;
       } catch {
         // best effort per PR
       }
     }));
 
-    writeReviews(reviews);
+    saveReviews(reviews);
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: true, updated }));
     return;
@@ -211,7 +200,7 @@ const server = http.createServer(async (req, res) => {
   // ── POST /api/reviews/:id/mark-seen ──────────────────────────────────────
   if (req.method === "POST" && url.pathname.includes("/mark-seen")) {
     const id      = decodeURIComponent(url.pathname.replace("/api/reviews/", "").replace("/mark-seen", ""));
-    const reviews = readReviews();
+    const reviews: PRReview[] = loadReviews();
     const review  = reviews.find(r => r.id === id);
     if (!review) {
       res.writeHead(404, { "Content-Type": "application/json" });
@@ -220,7 +209,7 @@ const server = http.createServer(async (req, res) => {
     }
     review.commitsSeenAt = new Date().toISOString();
     review.newCommits    = [];
-    writeReviews(reviews);
+    saveReviews(reviews);
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: true }));
     return;
@@ -276,7 +265,7 @@ const server = http.createServer(async (req, res) => {
   // ── DELETE /api/reviews/:id ───────────────────────────────────────────────
   if (req.method === "DELETE" && url.pathname.startsWith("/api/reviews/")) {
     const id       = decodeURIComponent(url.pathname.replace("/api/reviews/", ""));
-    const reviews  = readReviews();
+    const reviews: PRReview[] = loadReviews();
     const target   = reviews.find((r) => r.id === id);
     const filtered = reviews.filter((r) => r.id !== id);
 
@@ -286,8 +275,8 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (target) deleteLogFile(target);
-    writeReviews(filtered);
+    if (target) deleteReviewLog(target);
+    saveReviews(filtered);
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: true, remaining: filtered.length }));
     return;
@@ -295,9 +284,9 @@ const server = http.createServer(async (req, res) => {
 
   // ── DELETE /api/reviews (clear all) ──────────────────────────────────────
   if (req.method === "DELETE" && url.pathname === "/api/reviews") {
-    const reviews = readReviews();
-    reviews.forEach(deleteLogFile);
-    writeReviews([]);
+    const reviews: PRReview[] = loadReviews();
+    reviews.forEach((review: PRReview) => deleteReviewLog(review));
+    saveReviews([]);
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: true, remaining: 0 }));
     return;
@@ -305,7 +294,7 @@ const server = http.createServer(async (req, res) => {
 
   // ── GET /results/reviews.json ─────────────────────────────────────────────
   if (req.method === "GET" && url.pathname === "/results/reviews.json") {
-    const reviews = readReviews();
+    const reviews: PRReview[] = loadReviews();
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(reviews));
     return;

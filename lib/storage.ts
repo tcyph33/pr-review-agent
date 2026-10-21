@@ -37,6 +37,26 @@ export interface PRReview {
   lastReviewSubmittedAt: string | null;
   newCommits: import("./github.ts").CommitSummary[];
   commitsSeenAt: string | null;
+
+  // Head SHA of the PR at the moment the review was generated. Review comments
+  // are pinned to this commit so their line numbers land on the code the
+  // findings actually describe.
+  //
+  // This is a snapshot tied to the feedback stored alongside it. A re-review
+  // updates both together, since mergeReviews replaces the whole record. The
+  // metadata-only refresh in server.ts must leave it alone: that path does not
+  // regenerate feedback, so advancing the SHA there would make stale findings
+  // look current and silently defeat drift detection.
+  //
+  // Known risk: the value comes from PR metadata fetched shortly before the
+  // review agent clones the branch tip, so a commit landing in that window
+  // leaves this SHA older than what was actually reviewed. The error is
+  // one-directional and therefore safe: a stale value can only raise a spurious
+  // "lines may have shifted" warning, never suppress a real one.
+  //
+  // Reviews recorded before this field existed have it absent, so readers must
+  // treat a missing value as unknown rather than current.
+  reviewedHeadSha: string | null;
 }
 
 // ── Orchestration log helpers ─────────────────────────────────────────────────

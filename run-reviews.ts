@@ -263,7 +263,7 @@ async function reviewPR(
       filesChanged: 0, additions: 0, deletions: 0, feedback: "",
       reviewState: "PENDING", reviewStatus: "failed", prStatus: "open",
       prCreatedAt: new Date().toISOString(), reviewRequestedAt: null, triggerType: 'review-requested' as TriggerType,
-      lastReviewSubmittedAt: null, newCommits: [], commitsSeenAt: null,
+      lastReviewSubmittedAt: null, newCommits: [], commitsSeenAt: null, reviewedHeadSha: null,
       reviewedAt: new Date().toISOString(), logFile,
     };
   }
@@ -300,6 +300,7 @@ async function reviewPR(
       deletions: files.reduce((s, f) => s + f.deletions, 0),
       feedback, reviewState, reviewStatus: "success", prStatus: "open",
       lastReviewSubmittedAt: null, newCommits: [], commitsSeenAt: null,
+      reviewedHeadSha: details.head.sha,
       prCreatedAt: details.created_at, reviewRequestedAt, triggerType, reviewedAt: new Date().toISOString(), logFile,
     };
   } catch (err) {
@@ -308,6 +309,7 @@ async function reviewPR(
 
     let author = "unknown", branch = "", filesChanged = 0, additions = 0, deletions = 0;
     let prCreatedAt = new Date().toISOString();
+    let reviewedHeadSha: string | null = null;
     try {
       const [files, details] = await Promise.all([
         getPRFiles(octokit, owner, repo, pullNumber),
@@ -319,6 +321,7 @@ async function reviewPR(
       additions    = files.reduce((s, f) => s + f.additions, 0);
       deletions    = files.reduce((s, f) => s + f.deletions, 0);
       prCreatedAt  = details.created_at;
+      reviewedHeadSha = details.head.sha;
     } catch { /* best effort */ }
 
     return {
@@ -326,7 +329,7 @@ async function reviewPR(
       repo: `${owner}/${repo}`, pull_number: pullNumber,
       author, branch, filesChanged, additions, deletions,
       feedback: "", reviewState: "PENDING", reviewStatus: "failed", prStatus: "open",
-      lastReviewSubmittedAt: null, newCommits: [], commitsSeenAt: null,
+      lastReviewSubmittedAt: null, newCommits: [], commitsSeenAt: null, reviewedHeadSha,
       prCreatedAt, reviewRequestedAt: null, triggerType, reviewedAt: new Date().toISOString(), logFile,
     };
   }
