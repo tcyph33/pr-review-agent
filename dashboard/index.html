@@ -592,6 +592,93 @@
     .finding-context-body { margin-top: 9px; border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; background: var(--panel); }
     .finding-context-note { padding: 9px 11px; font-size: 0.74rem; color: var(--ink-mute); font-style: italic; }
 
+    /* ── Per-finding comment queue ── */
+    .finding-queue { margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--line); }
+
+    /* A queued finding is dimmed and struck through to mark it handled, but the
+       queue controls stay at full contrast so the drafted comment stays readable. */
+    .finding.queued .finding-head,
+    .finding.queued .finding-title,
+    .finding.queued .finding-detail,
+    .finding.queued .finding-refs { opacity: 0.45; }
+    .finding.queued .finding-title { text-decoration: line-through; }
+
+    .btn-queue {
+      background: var(--accent-tint);
+      color: var(--accent-deep);
+      border: 1px solid var(--accent-border);
+      font-size: 0.68rem;
+      padding: 4px 11px;
+    }
+    .btn-queue:hover { background: var(--accent-tint-hover); }
+
+    .btn-queue-remove {
+      background: var(--panel);
+      color: var(--ink-mute);
+      border: 1px solid var(--line);
+      font-size: 0.68rem;
+      padding: 4px 11px;
+    }
+    .btn-queue-remove:hover { color: var(--bad); border-color: var(--bad-border); background: var(--bad-tint); }
+
+    .queue-actions { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
+
+    .queue-editor textarea {
+      width: 100%;
+      min-height: 86px;
+      resize: vertical;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px 11px;
+      font-family: inherit;
+      font-size: 0.82rem;
+      line-height: 1.6;
+      color: var(--ink);
+      outline: none;
+    }
+
+    .queue-editor textarea:focus { border-color: var(--accent); }
+    .queue-editor-actions { display: flex; gap: 7px; margin-top: 8px; align-items: center; }
+
+    .queue-error { font-size: 0.72rem; color: var(--bad); }
+
+    .queue-label {
+      font-size: 0.58rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: var(--good);
+    }
+
+    .queue-preview {
+      margin-top: 7px;
+      font-size: 0.8rem;
+      line-height: 1.6;
+      color: var(--ink-body);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px 11px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* ── Review modal footer ── */
+    .modal-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 13px 22px;
+      border-top: 1px solid var(--line-soft);
+      flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+
+    .queue-count { font-size: 0.8rem; font-weight: 600; color: var(--ink); }
+    .queue-count-hint { font-size: 0.72rem; color: var(--ink-mute); font-weight: 400; margin-left: 6px; }
+
     .read-more {
       font-size: 0.62rem;
       font-weight: 700;
@@ -926,6 +1013,12 @@
       </div>
       <div class="modal-pane modal-pane-diff">
         <div id="diff-panel"></div>
+      </div>
+    </div>
+    <div class="modal-footer" id="review-modal-footer" style="display:none">
+      <span class="queue-count" id="queue-count"></span>
+      <div class="queue-actions">
+        <button class="btn-ghost" onclick="clearQueuedComments()">Clear queue</button>
       </div>
     </div>
   </div>
@@ -1271,8 +1364,10 @@
          </div>`
       : "";
 
+    const isQueued = queuedCommentsByKey.has(findingKey(finding));
+
     return `
-      <div class="finding">
+      <div class="finding${isQueued ? " queued" : ""}" id="finding-${index}">
         <div class="finding-head">
           <span class="badge ${severityClass}">${severityLabel}</span>
           ${locationHtml}
@@ -1282,6 +1377,7 @@
         ${finding.detail ? `<div class="finding-detail">${renderInlineMarkdown(finding.detail)}</div>` : ""}
         ${referencesHtml}
         ${contextHtml}
+        <div class="finding-queue" id="finding-queue-${index}">${renderFindingQueue(index)}</div>
       </div>`;
   }
 
@@ -1308,6 +1404,169 @@
     if (counts.NIT)     parts.push(`<span class="roll roll-nit">${plural(counts.NIT, "nit")}</span>`);
     if (parts.length === 0) parts.push(`<span class="roll roll-clean">No findings</span>`);
     return `<div class="finding-rollup">${parts.join("")}</div>`;
+  }
+
+  // ── Per-finding comment queue ──
+  // Queued comments are keyed by the finding's identity rather than its array
+  // index, so reopening the modal — or re-running an unchanged review — still
+  // matches them up, while a finding that genuinely changed stops matching and
+  // its stale draft is dropped instead of attaching to the wrong code.
+  const QUEUE_STORAGE_PREFIX = "queuedComments:";
+
+  let queuedCommentsByKey = new Map();
+  const findingsBeingEdited = new Set();
+
+  function findingKey(finding) {
+    const line    = finding.line ?? "file";
+    const checkId = finding.check_id ?? "";
+    return `${finding.file ?? "unknown"}:${line}:${checkId}`;
+  }
+
+  function loadQueuedComments(reviewId, findings) {
+    const loaded = new Map();
+    try {
+      const raw = localStorage.getItem(QUEUE_STORAGE_PREFIX + reviewId);
+      if (!raw) return loaded;
+
+      // Only keep drafts that still match a finding in this review
+      const liveKeys = new Set(findings.map(findingKey));
+      for (const [key, text] of Object.entries(JSON.parse(raw))) {
+        const isLive = liveKeys.has(key) && typeof text === "string";
+        if (isLive) loaded.set(key, text);
+      }
+    } catch {
+      // Unreadable or unparseable storage simply means an empty queue
+    }
+    return loaded;
+  }
+
+  function saveQueuedComments(reviewId) {
+    try {
+      const hasEntries = queuedCommentsByKey.size > 0;
+      if (hasEntries) {
+        localStorage.setItem(QUEUE_STORAGE_PREFIX + reviewId, JSON.stringify(Object.fromEntries(queuedCommentsByKey)));
+      } else {
+        localStorage.removeItem(QUEUE_STORAGE_PREFIX + reviewId);
+      }
+    } catch {
+      // Persistence is a convenience; the queue still works for this session
+    }
+  }
+
+  function renderFindingQueue(index) {
+    const finding = currentFindings[index];
+    if (!finding) return "";
+
+    const queuedText = queuedCommentsByKey.get(findingKey(finding));
+    const isQueued   = queuedText !== undefined;
+    const isEditing  = findingsBeingEdited.has(index);
+
+    if (isEditing) {
+      const draft = queuedText ?? finding.comment ?? "";
+      return `
+        <div class="queue-editor">
+          <textarea id="queue-text-${index}" oninput="clearQueueError(${index})" placeholder="What should the PR author see?">${escHtml(draft)}</textarea>
+          <div class="queue-editor-actions">
+            <button class="btn-queue" onclick="queueComment(${index})">${isQueued ? "Update" : "Queue"}</button>
+            <button class="btn-queue-remove" onclick="cancelCommentEditor(${index})">Cancel</button>
+            <span class="queue-error" id="queue-error-${index}"></span>
+          </div>
+        </div>`;
+    }
+
+    if (isQueued) {
+      return `
+        <span class="queue-label">✓ Queued</span>
+        <div class="queue-preview">${escHtml(queuedText)}</div>
+        <div class="queue-editor-actions">
+          <button class="btn-queue" onclick="openCommentEditor(${index})">Edit comment</button>
+          <button class="btn-queue-remove" onclick="removeQueuedComment(${index})">Remove</button>
+        </div>`;
+    }
+
+    return `
+      <div class="queue-actions">
+        <button class="btn-queue" onclick="openCommentEditor(${index})">Queue comment</button>
+      </div>`;
+  }
+
+  // Repaints one finding's queue area in place, so expanded diff context and
+  // scroll position survive a queue change.
+  function refreshFindingQueue(index) {
+    const queueElement   = document.getElementById(`finding-queue-${index}`);
+    const findingElement = document.getElementById(`finding-${index}`);
+    if (!queueElement || !findingElement) return;
+
+    queueElement.innerHTML = renderFindingQueue(index);
+    const isQueued = queuedCommentsByKey.has(findingKey(currentFindings[index]));
+    findingElement.classList.toggle("queued", isQueued);
+  }
+
+  function clearQueueError(index) {
+    const errorElement = document.getElementById(`queue-error-${index}`);
+    if (errorElement) errorElement.textContent = "";
+  }
+
+  function openCommentEditor(index) {
+    findingsBeingEdited.add(index);
+    refreshFindingQueue(index);
+    const textarea = document.getElementById(`queue-text-${index}`);
+    if (textarea) textarea.focus();
+  }
+
+  function cancelCommentEditor(index) {
+    findingsBeingEdited.delete(index);
+    refreshFindingQueue(index);
+  }
+
+  function queueComment(index) {
+    const textarea = document.getElementById(`queue-text-${index}`);
+    if (!textarea) return;
+
+    // A blank comment has nothing to post, so refuse instead of queueing it
+    const text = textarea.value.trim();
+    const isEmpty = text.length === 0;
+    if (isEmpty) {
+      const errorElement = document.getElementById(`queue-error-${index}`);
+      if (errorElement) errorElement.textContent = "Write a comment first.";
+      return;
+    }
+
+    queuedCommentsByKey.set(findingKey(currentFindings[index]), text);
+    findingsBeingEdited.delete(index);
+    saveQueuedComments(currentReview.id);
+    refreshFindingQueue(index);
+    renderQueueFooter();
+  }
+
+  function removeQueuedComment(index) {
+    queuedCommentsByKey.delete(findingKey(currentFindings[index]));
+    findingsBeingEdited.delete(index);
+    saveQueuedComments(currentReview.id);
+    refreshFindingQueue(index);
+    renderQueueFooter();
+  }
+
+  function clearQueuedComments() {
+    queuedCommentsByKey.clear();
+    findingsBeingEdited.clear();
+    saveQueuedComments(currentReview.id);
+    currentFindings.forEach((finding, index) => refreshFindingQueue(index));
+    renderQueueFooter();
+  }
+
+  function renderQueueFooter() {
+    const footerElement = document.getElementById("review-modal-footer");
+    const countElement  = document.getElementById("queue-count");
+    const queuedCount   = queuedCommentsByKey.size;
+
+    const hasQueue = queuedCount > 0;
+    footerElement.style.display = hasQueue ? "" : "none";
+    if (!hasQueue) return;
+
+    countElement.innerHTML =
+      `${queuedCount} comment${queuedCount === 1 ? "" : "s"} queued`
+      + `<span class="queue-count-hint">Nothing has been sent to GitHub yet</span>`;
   }
 
   // ── PR diff panel ──
@@ -1649,6 +1908,11 @@
     document.getElementById('review-modal-title').textContent = review.title;
     const content = document.getElementById('review-modal-content');
     const parsed  = parseFindings(review.feedback);
+
+    // Restore any drafts before rendering, so findings show as queued straight away
+    queuedCommentsByKey = loadQueuedComments(review.id, parsed ? parsed.findings : []);
+    findingsBeingEdited.clear();
+
     content.innerHTML = parsed
       ? renderMarkdown(parsed.before) + renderFindings(parsed.findings) + renderMarkdown(parsed.after)
       : `<div class="findings-notice">Couldn't read structured findings in this review — showing the raw text below.</div>`
@@ -1665,6 +1929,7 @@
     // Reset both panes to the top — the modal element is reused across reviews
     content.parentElement.scrollTop = 0;
     applyDiffPaneVisibility();
+    renderQueueFooter();
 
     document.getElementById('review-modal').classList.add('visible');
     document.body.style.overflow = 'hidden';
