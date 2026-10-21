@@ -676,8 +676,68 @@
       flex-wrap: wrap;
     }
 
+    .modal-footer { flex-direction: column; align-items: stretch; }
+
+    .queue-footer-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
     .queue-count { font-size: 0.8rem; font-weight: 600; color: var(--ink); }
-    .queue-count-hint { font-size: 0.72rem; color: var(--ink-mute); font-weight: 400; margin-left: 6px; }
+
+    .btn-link { text-decoration: none; display: inline-flex; align-items: center; }
+
+    .queue-notice {
+      background: var(--warn-tint);
+      border: 1px solid var(--warn-border);
+      color: var(--warn);
+      border-radius: 8px;
+      padding: 9px 12px;
+      font-size: 0.76rem;
+      margin-bottom: 11px;
+    }
+
+    .queue-unplaceable { margin-top: 11px; border-top: 1px solid var(--line); padding-top: 10px; }
+
+    .queue-unplaceable-title {
+      font-size: 0.6rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.13em;
+      color: var(--warn);
+      margin-bottom: 8px;
+    }
+
+    .queue-unplaceable-item {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 4px 0;
+      flex-wrap: wrap;
+    }
+
+    .queue-unplaceable-where  { font-family: var(--mono); font-size: 0.72rem; color: var(--ink); }
+    .queue-unplaceable-reason { font-size: 0.74rem; color: var(--ink-mute); flex: 1; min-width: 160px; }
+
+    .queue-working, .queue-success, .queue-error-box, .queue-info {
+      margin-top: 11px;
+      border-radius: 8px;
+      padding: 9px 12px;
+      font-size: 0.78rem;
+      line-height: 1.55;
+    }
+
+    .queue-working   { background: var(--panel-2);  color: var(--ink-mute); font-style: italic; }
+    .queue-success   { background: var(--good-tint); color: var(--good); border: 1px solid var(--good); }
+    .queue-error-box { background: var(--bad-tint);  color: var(--bad);  border: 1px solid var(--bad-border); }
+    .queue-info      { background: var(--panel-2);  color: var(--ink-body); border: 1px solid var(--line); }
+
+    .queue-error-detail { font-family: var(--mono); font-size: 0.72rem; margin-top: 6px; opacity: 0.85; }
+
+    .queue-success a, .queue-error-box a, .queue-info a { color: inherit; font-weight: 600; }
 
     .read-more {
       font-size: 0.62rem;
@@ -1015,12 +1075,7 @@
         <div id="diff-panel"></div>
       </div>
     </div>
-    <div class="modal-footer" id="review-modal-footer" style="display:none">
-      <span class="queue-count" id="queue-count"></span>
-      <div class="queue-actions">
-        <button class="btn-ghost" onclick="clearQueuedComments()">Clear queue</button>
-      </div>
-    </div>
+    <div class="modal-footer" id="review-modal-footer" style="display:none"></div>
   </div>
 </div>
 
@@ -1411,9 +1466,13 @@
   // index, so reopening the modal — or re-running an unchanged review — still
   // matches them up, while a finding that genuinely changed stops matching and
   // its stale draft is dropped instead of attaching to the wrong code.
-  const QUEUE_STORAGE_PREFIX = "queuedComments:";
+  const QUEUE_STORAGE_PREFIX = "reviewQueue:";
 
   let queuedCommentsByKey = new Map();
+  let sentState       = null;   // { keys, positions, reviewId, url } once a draft exists on GitHub
+  let lastPartition   = null;   // inline/can't-place split, computed against the diff
+  let queueResultHtml = "";     // footer status message, preserved across re-renders
+  let wasRegenerated  = false;
   const findingsBeingEdited = new Set();
 
   function findingKey(finding) {
@@ -1422,32 +1481,52 @@
     return `${finding.file ?? "unknown"}:${line}:${checkId}`;
   }
 
-  function loadQueuedComments(reviewId, findings) {
-    const loaded = new Map();
+  function loadReviewQueue(review, findings) {
+    const empty = { drafts: new Map(), sent: null, regenerated: false };
     try {
-      const raw = localStorage.getItem(QUEUE_STORAGE_PREFIX + reviewId);
-      if (!raw) return loaded;
+      const raw = localStorage.getItem(QUEUE_STORAGE_PREFIX + review.id);
+      if (!raw) return empty;
 
-      // Only keep drafts that still match a finding in this review
-      const liveKeys = new Set(findings.map(findingKey));
-      for (const [key, text] of Object.entries(JSON.parse(raw))) {
-        const isLive = liveKeys.has(key) && typeof text === "string";
-        if (isLive) loaded.set(key, text);
+      const stored = JSON.parse(raw);
+
+      // A different reviewed SHA means the review was regenerated against new
+      // commits. Drafts written against the old analysis could land on lines
+      // that have since moved, so the whole set goes rather than being reused.
+      const storedSha  = stored.reviewedHeadSha ?? null;
+      const currentSha = review.reviewedHeadSha ?? null;
+      const isRegenerated = storedSha !== currentSha;
+      if (isRegenerated) {
+        localStorage.removeItem(QUEUE_STORAGE_PREFIX + review.id);
+        return { drafts: new Map(), sent: null, regenerated: true };
       }
+
+      // Drop drafts whose finding no longer exists in this review
+      const liveKeys = new Set(findings.map(findingKey));
+      const drafts = new Map();
+      for (const [key, text] of Object.entries(stored.drafts ?? {})) {
+        const isLive = liveKeys.has(key) && typeof text === "string";
+        if (isLive) drafts.set(key, text);
+      }
+
+      return { drafts, sent: stored.sent ?? null, regenerated: false };
     } catch {
       // Unreadable or unparseable storage simply means an empty queue
+      return empty;
     }
-    return loaded;
   }
 
-  function saveQueuedComments(reviewId) {
+  function saveReviewQueue(review) {
     try {
-      const hasEntries = queuedCommentsByKey.size > 0;
-      if (hasEntries) {
-        localStorage.setItem(QUEUE_STORAGE_PREFIX + reviewId, JSON.stringify(Object.fromEntries(queuedCommentsByKey)));
-      } else {
-        localStorage.removeItem(QUEUE_STORAGE_PREFIX + reviewId);
+      const hasAnything = queuedCommentsByKey.size > 0 || sentState !== null;
+      if (!hasAnything) {
+        localStorage.removeItem(QUEUE_STORAGE_PREFIX + review.id);
+        return;
       }
+      localStorage.setItem(QUEUE_STORAGE_PREFIX + review.id, JSON.stringify({
+        reviewedHeadSha: review.reviewedHeadSha ?? null,
+        drafts: Object.fromEntries(queuedCommentsByKey),
+        sent: sentState,
+      }));
     } catch {
       // Persistence is a convenience; the queue still works for this session
     }
@@ -1534,39 +1613,319 @@
 
     queuedCommentsByKey.set(findingKey(currentFindings[index]), text);
     findingsBeingEdited.delete(index);
-    saveQueuedComments(currentReview.id);
+    saveReviewQueue(currentReview);
     refreshFindingQueue(index);
-    renderQueueFooter();
+    queueResultHtml = "";
+    refreshQueuePartition();
   }
 
   function removeQueuedComment(index) {
     queuedCommentsByKey.delete(findingKey(currentFindings[index]));
     findingsBeingEdited.delete(index);
-    saveQueuedComments(currentReview.id);
+    saveReviewQueue(currentReview);
     refreshFindingQueue(index);
+    queueResultHtml = "";
+    refreshQueuePartition();
+  }
+
+  // Clearing is local only — a pending review already on GitHub is left alone,
+  // so the message hands back its link rather than implying it was cleaned up.
+  function clearQueuedComments() {
+    const pendingUrl = sentState === null ? null : sentState.url;
+
+    queuedCommentsByKey.clear();
+    findingsBeingEdited.clear();
+    sentState = null;
+    lastPartition = null;
+    saveReviewQueue(currentReview);
+    currentFindings.forEach((finding, index) => refreshFindingQueue(index));
+
+    queueResultHtml = pendingUrl === null
+      ? ""
+      : `<div class="queue-info">Queue cleared. The pending review is still on GitHub — <a href="${escHtml(pendingUrl)}" target="_blank" rel="noreferrer">open it</a> to submit or delete it.</div>`;
     renderQueueFooter();
   }
 
-  function clearQueuedComments() {
-    queuedCommentsByKey.clear();
-    findingsBeingEdited.clear();
-    saveQueuedComments(currentReview.id);
-    currentFindings.forEach((finding, index) => refreshFindingQueue(index));
+  // ── Sending the queue to GitHub as a pending review ──
+
+  // Splits the queue into comments GitHub can anchor inline and ones it cannot,
+  // judged against the supplied diff rather than any cached copy.
+  function partitionQueuedComments(diff) {
+    const placeable = [];
+    const unplaceable = [];
+
+    for (const finding of currentFindings) {
+      const key  = findingKey(finding);
+      const text = queuedCommentsByKey.get(key);
+      if (text === undefined) continue;
+
+      const hasLine = finding.line !== null && finding.line !== undefined;
+      const file    = diff.files.find((candidate) => candidate.filename === finding.file);
+
+      let reason = null;
+      if (!hasLine)      reason = "the finding is file-level, with no line to anchor to";
+      else if (!file)    reason = `${finding.file} is not part of this PR's diff`;
+      else if (!file.patch) reason = `GitHub provides no patch for ${finding.file}`;
+      else if (findFindingContextRows(file, finding.line) === null) {
+        reason = `line ${finding.line} falls outside the changed hunks`;
+      }
+
+      const isPlaceable = reason === null;
+      if (isPlaceable) placeable.push({ path: finding.file, line: finding.line, body: text, key });
+      else unplaceable.push({ finding, text, reason, key });
+    }
+
+    return { placeable, unplaceable };
+  }
+
+  async function refreshQueuePartition() {
+    const hasQueue = queuedCommentsByKey.size > 0;
+    if (!hasQueue) {
+      lastPartition = null;
+      renderQueueFooter();
+      return;
+    }
+    try {
+      lastPartition = partitionQueuedComments(await fetchDiff(currentReview));
+    } catch {
+      // Without a diff we simply cannot report the split; the footer omits it
+      lastPartition = null;
+    }
     renderQueueFooter();
+  }
+
+  function setQueueResult(cssClass, html) {
+    queueResultHtml = `<div class="${cssClass}">${html}</div>`;
+    renderQueueFooter();
+  }
+
+  async function fetchPendingReview(reviewId) {
+    const response = await fetch(`/api/reviews/${encodeURIComponent(reviewId)}/pending-review`);
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error ?? `HTTP ${response.status}`);
+    }
+    const payload = await response.json();
+    return payload.pending;
+  }
+
+  async function startPendingReview() {
+    setQueueResult("queue-working", "Validating comments against the current diff…");
+
+    // Re-fetch rather than trusting the copy cached when the modal opened: stale
+    // line numbers are the main reason GitHub rejects a comment position.
+    diffCacheByReviewId.delete(currentReview.id);
+
+    let partition;
+    try {
+      partition = partitionQueuedComments(await fetchDiff(currentReview));
+      lastPartition = partition;
+    } catch (err) {
+      setQueueResult("queue-error-box", `Could not load the diff to validate comments: ${escHtml(err.message)}`);
+      return;
+    }
+
+    const hasPlaceable = partition.placeable.length > 0;
+    if (!hasPlaceable) {
+      setQueueResult("queue-error-box", "None of the queued comments can be anchored to this PR's diff, so there is nothing to send. Use Copy all and add them in GitHub instead.");
+      return;
+    }
+
+    if (MOCK_MODE) {
+      sentState = {
+        keys: partition.placeable.map((comment) => comment.key),
+        positions: partition.placeable.map((comment) => ({ path: comment.path, line: comment.line })),
+        reviewId: 1,
+        url: currentReview.url,
+      };
+      saveReviewQueue(currentReview);
+      setQueueResult("queue-success", `Mock mode: pretended to create a pending review with ${partition.placeable.length} comment(s).`);
+      return;
+    }
+
+    // GitHub allows one pending review per PR, so find out before trying
+    setQueueResult("queue-working", "Checking for an existing pending review…");
+    let pending;
+    try {
+      pending = await fetchPendingReview(currentReview.id);
+    } catch (err) {
+      setQueueResult("queue-error-box", `Could not check for an existing pending review: ${escHtml(err.message)}`);
+      return;
+    }
+
+    let replaceReviewId = null;
+    if (pending) {
+      // Anything in the draft that we did not put there was added by hand in
+      // GitHub, and replacing would destroy it — so that path is not offered.
+      const ourPositions = new Set((sentState?.positions ?? []).map((position) => `${position.path}:${position.line}`));
+      const manualComments = pending.comments.filter((comment) => !ourPositions.has(`${comment.path}:${comment.line}`));
+
+      const hasManualComments = manualComments.length > 0;
+      if (hasManualComments) {
+        setQueueResult("queue-error-box",
+          `You've added ${manualComments.length} comment${manualComments.length === 1 ? "" : "s"} in GitHub since this review was started. `
+          + `Updating would discard ${manualComments.length === 1 ? "it" : "them"}, so it isn't offered. `
+          + `Add the new comment in GitHub instead — use Copy all above — or `
+          + `<a href="${escHtml(pending.htmlUrl)}" target="_blank" rel="noreferrer">open the pending review</a>.`);
+        return;
+      }
+      replaceReviewId = pending.id;
+    }
+
+    setQueueResult("queue-working", replaceReviewId === null ? "Creating the pending review…" : "Updating the pending review…");
+
+    try {
+      const response = await fetch(`/api/reviews/${encodeURIComponent(currentReview.id)}/start-review`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          comments: partition.placeable.map((comment) => ({ path: comment.path, line: comment.line, body: comment.body })),
+          replaceReviewId,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        setQueueResult("queue-error-box",
+          `GitHub rejected the review, so nothing was created and your queue is unchanged.`
+          + `<div class="queue-error-detail">${escHtml(payload.error ?? `HTTP ${response.status}`)}</div>`
+          + `<div class="queue-error-detail">All ${partition.placeable.length} comment(s) passed our diff validation, so GitHub applied a stricter rule than we model.</div>`);
+        return;
+      }
+
+      sentState = {
+        keys: partition.placeable.map((comment) => comment.key),
+        positions: partition.placeable.map((comment) => ({ path: comment.path, line: comment.line })),
+        reviewId: payload.review.id,
+        url: payload.review.htmlUrl,
+      };
+      saveReviewQueue(currentReview);
+
+      // GitHub should hold this as a draft; if it did not, say so plainly
+      const isPending = payload.review.state === "PENDING";
+      if (!isPending) {
+        setQueueResult("queue-error-box",
+          `GitHub reported this review as <strong>${escHtml(payload.review.state)}</strong> rather than PENDING, which means it published instead of drafting. `
+          + `<a href="${escHtml(payload.review.htmlUrl)}" target="_blank" rel="noreferrer">Open it</a> to dismiss if that wasn't what you wanted.`);
+        return;
+      }
+
+      setQueueResult("queue-success",
+        `Pending review ready with ${partition.placeable.length} comment${partition.placeable.length === 1 ? "" : "s"}. `
+        + `<a href="${escHtml(payload.review.htmlUrl)}" target="_blank" rel="noreferrer">Open it on GitHub</a> to add more and submit.`);
+    } catch (err) {
+      setQueueResult("queue-error-box", `Could not reach the dashboard server: ${escHtml(err.message)}`);
+    }
+  }
+
+  async function copyTextToClipboard(text, successMessage) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setQueueResult("queue-success", escHtml(successMessage));
+    } catch {
+      setQueueResult("queue-error-box", "Could not write to the clipboard — your browser may block it here.");
+    }
+  }
+
+  function queuedCommentAsText(finding, text) {
+    const where = finding.line === null || finding.line === undefined
+      ? finding.file
+      : `${finding.file}:${finding.line}`;
+    return `${where}\n${text}\n`;
+  }
+
+  async function copyAllQueuedComments() {
+    const blocks = [];
+    for (const finding of currentFindings) {
+      const text = queuedCommentsByKey.get(findingKey(finding));
+      if (text === undefined) continue;
+      blocks.push(queuedCommentAsText(finding, text));
+    }
+    await copyTextToClipboard(blocks.join("\n"), `${blocks.length} comment${blocks.length === 1 ? "" : "s"} copied.`);
+  }
+
+  async function copyUnplaceableComment(index) {
+    const item = lastPartition?.unplaceable?.[index];
+    if (!item) return;
+    await copyTextToClipboard(queuedCommentAsText(item.finding, item.text), "Comment copied.");
+  }
+
+  function buildQueueFooterHtml() {
+    const sections = [];
+    const queuedCount = queuedCommentsByKey.size;
+    const hasSent = sentState !== null;
+
+    if (wasRegenerated) {
+      sections.push(`<div class="queue-notice">This review was regenerated for new commits, so earlier drafts were cleared. A pending review from before may still exist on GitHub.</div>`);
+    }
+
+    // Status line: what is queued, what is already on GitHub, and the drift between them
+    const sentKeys = new Set(hasSent ? sentState.keys : []);
+    const addedSinceSent   = [...queuedCommentsByKey.keys()].filter((key) => !sentKeys.has(key)).length;
+    const removedSinceSent = hasSent ? sentState.keys.filter((key) => !queuedCommentsByKey.has(key)).length : 0;
+    const hasChanges = addedSinceSent > 0 || removedSinceSent > 0;
+
+    let status;
+    if (hasSent) {
+      const sentCount = sentState.keys.length;
+      status = `Pending review on GitHub · ${sentCount} comment${sentCount === 1 ? "" : "s"}`;
+      if (hasChanges) {
+        const changes = [];
+        if (addedSinceSent > 0)   changes.push(`+${addedSinceSent} new`);
+        if (removedSinceSent > 0) changes.push(`${removedSinceSent} removed`);
+        status += ` · ${changes.join(", ")}`;
+      }
+    } else {
+      status = `${queuedCount} comment${queuedCount === 1 ? "" : "s"} queued`;
+    }
+
+    const hasSplit = lastPartition !== null && lastPartition.unplaceable.length > 0;
+    if (hasSplit) status += ` · ${lastPartition.placeable.length} can be placed inline`;
+
+    const buttons = [];
+    if (hasSent) {
+      buttons.push(`<a class="btn-ghost btn-link" href="${escHtml(sentState.url)}" target="_blank" rel="noreferrer">Open on GitHub</a>`);
+      if (hasChanges && queuedCount > 0) buttons.push(`<button class="btn-queue" onclick="startPendingReview()">Update review</button>`);
+    } else if (queuedCount > 0) {
+      buttons.push(`<button class="btn-queue" onclick="startPendingReview()">Start review on GitHub</button>`);
+    }
+    if (queuedCount > 0) buttons.push(`<button class="btn-ghost" onclick="copyAllQueuedComments()">Copy all</button>`);
+    if (queuedCount > 0 || hasSent) buttons.push(`<button class="btn-ghost" onclick="clearQueuedComments()">Clear queue</button>`);
+
+    sections.push(`
+      <div class="queue-footer-row">
+        <span class="queue-count">${status}</span>
+        <div class="queue-actions">${buttons.join("")}</div>
+      </div>`);
+
+    // Comments GitHub cannot anchor: named individually, with nothing sent for them
+    if (hasSplit) {
+      sections.push(`
+        <div class="queue-unplaceable">
+          <div class="queue-unplaceable-title">${lastPartition.unplaceable.length} comment${lastPartition.unplaceable.length === 1 ? "" : "s"} can't be placed inline and won't be sent</div>
+          ${lastPartition.unplaceable.map((item, index) => `
+            <div class="queue-unplaceable-item">
+              <span class="queue-unplaceable-where">${escHtml(item.finding.file)}${item.finding.line === null || item.finding.line === undefined ? "" : ":" + escHtml(String(item.finding.line))}</span>
+              <span class="queue-unplaceable-reason">${escHtml(item.reason)}</span>
+              <button class="btn-queue-remove" onclick="copyUnplaceableComment(${index})">Copy</button>
+            </div>`).join("")}
+        </div>`);
+    }
+
+    if (queueResultHtml) sections.push(queueResultHtml);
+    return sections.join("");
   }
 
   function renderQueueFooter() {
     const footerElement = document.getElementById("review-modal-footer");
-    const countElement  = document.getElementById("queue-count");
-    const queuedCount   = queuedCommentsByKey.size;
+    const isVisible = queuedCommentsByKey.size > 0 || sentState !== null || wasRegenerated || queueResultHtml !== "";
 
-    const hasQueue = queuedCount > 0;
-    footerElement.style.display = hasQueue ? "" : "none";
-    if (!hasQueue) return;
-
-    countElement.innerHTML =
-      `${queuedCount} comment${queuedCount === 1 ? "" : "s"} queued`
-      + `<span class="queue-count-hint">Nothing has been sent to GitHub yet</span>`;
+    footerElement.style.display = isVisible ? "" : "none";
+    if (!isVisible) {
+      footerElement.innerHTML = "";
+      return;
+    }
+    footerElement.innerHTML = buildQueueFooterHtml();
   }
 
   // ── PR diff panel ──
@@ -1909,8 +2268,13 @@
     const content = document.getElementById('review-modal-content');
     const parsed  = parseFindings(review.feedback);
 
-    // Restore any drafts before rendering, so findings show as queued straight away
-    queuedCommentsByKey = loadQueuedComments(review.id, parsed ? parsed.findings : []);
+    // Restore drafts before rendering, so findings show as queued straight away
+    const restored = loadReviewQueue(review, parsed ? parsed.findings : []);
+    queuedCommentsByKey = restored.drafts;
+    sentState       = restored.sent;
+    wasRegenerated  = restored.regenerated;
+    lastPartition   = null;
+    queueResultHtml = "";
     findingsBeingEdited.clear();
 
     content.innerHTML = parsed
@@ -1934,8 +2298,9 @@
     document.getElementById('review-modal').classList.add('visible');
     document.body.style.overflow = 'hidden';
 
-    // Fire and forget: the review text is already readable while the diff loads
-    loadDiffPanel(review);
+    // The review text is already readable while the diff loads. Once it lands,
+    // the footer can report which queued comments GitHub will accept inline.
+    loadDiffPanel(review).then(() => refreshQueuePartition());
   }
 
   function closeReviewModal(e) {

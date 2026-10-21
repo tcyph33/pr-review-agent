@@ -274,6 +274,137 @@ export async function getPullRequestDiff(
   return pullRequestDiff;
 }
 
+export interface PendingReviewComment {
+  path: string;
+  line: number | null;
+}
+
+export interface PendingReview {
+  id: number;
+  htmlUrl: string;
+  comments: PendingReviewComment[];
+}
+
+export interface PendingReviewCommentInput {
+  path: string;
+  line: number;
+  body: string;
+}
+
+export interface CreatePendingReviewResult {
+  id: number;
+  htmlUrl: string;
+  /** GitHub's own report of the review's state. Anything other than PENDING means it published. */
+  state: string;
+}
+
+/**
+ * Finds the authenticated user's pending (draft) review on a pull request.
+ *
+ * @param octokit - Authenticated GitHub client
+ * @param owner - Repository owner
+ * @param repo - Repository name
+ * @param pull_number - Pull request number
+ * @param username - Login whose pending review to look for
+ * @returns The pending review with its comment positions, or null when none exists
+ */
+export async function getPendingReview(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  pull_number: number,
+  username: string
+): Promise<PendingReview | null> {
+  const { data: reviews } = await octokit.rest.pulls.listReviews({
+    owner, repo, pull_number, per_page: 100,
+  });
+
+  const pending = reviews.find((review) => {
+    const isPending = review.state === "PENDING";
+    const isOurs = review.user?.login === username;
+    return isPending && isOurs;
+  });
+
+  const hasPending = pending !== undefined;
+  if (!hasPending) return null;
+
+  // A pending review's comments are only reachable through its own endpoint
+  const { data: comments } = await octokit.rest.pulls.listCommentsForReview({
+    owner, repo, pull_number, review_id: pending.id, per_page: 100,
+  });
+
+  const pendingReview: PendingReview = {
+    id: pending.id,
+    htmlUrl: pending.html_url,
+    comments: comments.map((comment) => ({ path: comment.path, line: comment.line ?? null })),
+  };
+  return pendingReview;
+}
+
+/**
+ * Creates a pending (draft) review on a pull request.
+ *
+ * The `event` parameter is deliberately omitted — that is what makes GitHub hold
+ * the review as a private draft rather than publishing it. Callers must check the
+ * returned `state`, because anything other than PENDING means it published and
+ * the author needs telling.
+ *
+ * @param octokit - Authenticated GitHub client
+ * @param owner - Repository owner
+ * @param repo - Repository name
+ * @param pull_number - Pull request number
+ * @param comments - Inline comments, each already validated against the diff
+ * @param commitId - Commit the line numbers refer to, or null to use the PR head
+ * @returns The new review's id and url, plus the state GitHub reported
+ */
+export async function createPendingReview(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  pull_number: number,
+  comments: PendingReviewCommentInput[],
+  commitId: string | null
+): Promise<CreatePendingReviewResult> {
+  const { data } = await octokit.rest.pulls.createReview({
+    owner, repo, pull_number,
+    ...(commitId === null ? {} : { commit_id: commitId }),
+    comments: comments.map((comment) => ({
+      path: comment.path,
+      line: comment.line,
+      side: "RIGHT",
+      body: comment.body,
+    })),
+  });
+
+  const result: CreatePendingReviewResult = {
+    id: data.id,
+    htmlUrl: data.html_url,
+    state: data.state,
+  };
+  return result;
+}
+
+/**
+ * Deletes a pending (draft) review, discarding its comments.
+ *
+ * @param octokit - Authenticated GitHub client
+ * @param owner - Repository owner
+ * @param repo - Repository name
+ * @param pull_number - Pull request number
+ * @param reviewId - Id of the pending review to delete
+ */
+export async function deletePendingReview(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  pull_number: number,
+  reviewId: number
+): Promise<void> {
+  await octokit.rest.pulls.deletePendingReview({
+    owner, repo, pull_number, review_id: reviewId,
+  });
+}
+
 export interface CommitSummary {
   sha: string;
   message: string;

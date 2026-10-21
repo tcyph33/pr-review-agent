@@ -8,7 +8,15 @@ import os from "os";
 import path from "path";
 import { execSync } from "child_process";
 import { fileURLToPath } from "url";
-import { createOctokit, refreshPRData, getPullRequestDiff } from "./lib/github.ts";
+import {
+  createOctokit,
+  refreshPRData,
+  getPullRequestDiff,
+  getPendingReview,
+  createPendingReview,
+  deletePendingReview,
+} from "./lib/github.ts";
+import type { PendingReviewCommentInput } from "./lib/github.ts";
 import { loadReviews, saveReviews, deleteReviewLog } from "./lib/storage.ts";
 import type { PRReview } from "./lib/storage.ts";
 
@@ -44,6 +52,136 @@ function findReview(reviewId: string): PRReview | null {
   );
   const foundReview: PRReview | null = matchingReview ?? null;
   return foundReview;
+}
+
+// ── Request parsing ───────────────────────────────────────────────────────────
+
+/**
+ * Reads and parses a JSON request body.
+ *
+ * @param req - The incoming request
+ * @returns The parsed JSON value, still untrusted
+ * @throws {Error} If the body exceeds the size cap or is not valid JSON
+ */
+function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
+  const MAX_BODY_BYTES = 1_000_000;
+
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let receivedBytes = 0;
+
+    req.on("data", (chunk: Buffer) => {
+      receivedBytes += chunk.length;
+      const isTooLarge = receivedBytes > MAX_BODY_BYTES;
+      if (isTooLarge) {
+        reject(new Error("Request body too large"));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+
+    req.on("end", () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      } catch {
+        reject(new Error("Request body is not valid JSON"));
+      }
+    });
+
+    req.on("error", reject);
+  });
+}
+
+interface StartReviewPayload {
+  comments: PendingReviewCommentInput[];
+  replaceReviewId: number | null;
+}
+
+/**
+ * Validates an untrusted start-review payload at the trust boundary, so the
+ * GitHub call downstream can assume a correct shape.
+ *
+ * Note that `event` is never accepted from the client: this endpoint only ever
+ * creates pending reviews, and letting a caller supply an event would publish.
+ *
+ * @param raw - The parsed request body
+ * @returns The payload with its shape guaranteed
+ * @throws {Error} If any field is missing or of the wrong type
+ */
+function parseStartReviewPayload(raw: unknown): StartReviewPayload {
+  const isObject = typeof raw === "object" && raw !== null;
+  if (!isObject) throw new Error("Expected a JSON object");
+
+  const candidate = raw as Record<string, unknown>;
+
+  const isCommentsArray = Array.isArray(candidate.comments);
+  if (!isCommentsArray) throw new Error("`comments` must be an array");
+
+  const comments: PendingReviewCommentInput[] = (candidate.comments as unknown[]).map((entry, index) => {
+    const isEntryObject = typeof entry === "object" && entry !== null;
+    if (!isEntryObject) throw new Error(`comments[${index}] must be an object`);
+
+    const comment = entry as Record<string, unknown>;
+    const hasPath = typeof comment.path === "string" && comment.path.length > 0;
+    const hasLine = typeof comment.line === "number" && Number.isInteger(comment.line) && comment.line > 0;
+    const hasBody = typeof comment.body === "string" && comment.body.trim().length > 0;
+
+    if (!hasPath) throw new Error(`comments[${index}].path must be a non-empty string`);
+    if (!hasLine) throw new Error(`comments[${index}].line must be a positive integer`);
+    if (!hasBody) throw new Error(`comments[${index}].body must be a non-empty string`);
+
+    return {
+      path: comment.path as string,
+      line: comment.line as number,
+      body: comment.body as string,
+    };
+  });
+
+  const rawReplaceId = candidate.replaceReviewId;
+  const hasReplaceId = typeof rawReplaceId === "number" && Number.isInteger(rawReplaceId);
+
+  const payload: StartReviewPayload = {
+    comments,
+    replaceReviewId: hasReplaceId ? (rawReplaceId as number) : null,
+  };
+  return payload;
+}
+
+/**
+ * Turns an Octokit failure into a message worth showing a human, preferring
+ * GitHub's own wording over a generic transport error.
+ *
+ * @param err - The thrown value
+ * @returns GitHub's message plus any field-level details it supplied
+ */
+function describeGitHubError(err: unknown): string {
+  const hasResponse = typeof err === "object" && err !== null && "response" in err;
+  if (!hasResponse) return err instanceof Error ? err.message : String(err);
+
+  const response = (err as { response?: { data?: { message?: string; errors?: unknown[] } } }).response;
+  const message = response?.data?.message ?? "GitHub rejected the request";
+  const details = Array.isArray(response?.data?.errors) ? response.data.errors : [];
+
+  const hasDetails = details.length > 0;
+  if (!hasDetails) return message;
+
+  const detailText = details.map((detail) => JSON.stringify(detail)).join("; ");
+  return `${message} — ${detailText}`;
+}
+
+let cachedUsername: string | null = GITHUB_USERNAME || null;
+
+/**
+ * Resolves the authenticated GitHub login, caching it for the process lifetime.
+ *
+ * @returns The login name
+ */
+async function resolveUsername(): Promise<string> {
+  if (cachedUsername !== null) return cachedUsername;
+  const { data } = await octokit!.rest.users.getAuthenticated();
+  cachedUsername = data.login;
+  return cachedUsername;
 }
 
 // ── Claude Code launcher ──────────────────────────────────────────────────────
@@ -160,10 +298,7 @@ const server = http.createServer(async (req, res) => {
 
     const reviews: PRReview[] = loadReviews();
     const open     = reviews.filter(r => r.prStatus === "open" || !r.prStatus);
-    const username = GITHUB_USERNAME || (await (async () => {
-      const { data } = await octokit!.rest.users.getAuthenticated();
-      return data.login;
-    })());
+    const username = await resolveUsername();
 
     let updated = 0;
     await Promise.all(open.map(async (review) => {
@@ -234,6 +369,96 @@ const server = http.createServer(async (req, res) => {
       const message = err instanceof Error ? err.message : String(err);
       res.writeHead(500, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: message }));
+    }
+    return;
+  }
+
+  // ── GET /api/reviews/:id/pending-review ───────────────────────────────────
+  if (req.method === "GET" && url.pathname.endsWith("/pending-review")) {
+    const reviewId: string = decodeURIComponent(
+      url.pathname.replace("/api/reviews/", "").replace("/pending-review", "")
+    );
+    const review: PRReview | null = findReview(reviewId);
+
+    const isReviewMissing: boolean = (review === null);
+    if (isReviewMissing) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Review not found" }));
+      return;
+    }
+
+    const isClientMissing: boolean = (octokit === null);
+    if (isClientMissing) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "GITHUB_API_TOKEN not set" }));
+      return;
+    }
+
+    // Report any existing draft so the dashboard can avoid a duplicate-review 422
+    try {
+      const username = await resolveUsername();
+      const [owner, repoName] = review!.repo.split("/");
+      const pending = await getPendingReview(octokit!, owner, repoName, review!.pull_number, username);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ pending }));
+    } catch (err) {
+      res.writeHead(502, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: describeGitHubError(err) }));
+    }
+    return;
+  }
+
+  // ── POST /api/reviews/:id/start-review ────────────────────────────────────
+  if (req.method === "POST" && url.pathname.endsWith("/start-review")) {
+    const reviewId: string = decodeURIComponent(
+      url.pathname.replace("/api/reviews/", "").replace("/start-review", "")
+    );
+    const review: PRReview | null = findReview(reviewId);
+
+    const isReviewMissing: boolean = (review === null);
+    if (isReviewMissing) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Review not found" }));
+      return;
+    }
+
+    const isClientMissing: boolean = (octokit === null);
+    if (isClientMissing) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "GITHUB_API_TOKEN not set" }));
+      return;
+    }
+
+    // Validate at the boundary so the GitHub call can trust its input
+    let payload: StartReviewPayload;
+    try {
+      payload = parseStartReviewPayload(await readJsonBody(req));
+    } catch (err) {
+      const message: string = err instanceof Error ? err.message : String(err);
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: message }));
+      return;
+    }
+
+    // Replace means deleting the old draft first, since GitHub permits only one
+    try {
+      const [owner, repoName] = review!.repo.split("/");
+
+      const isReplacing: boolean = (payload.replaceReviewId !== null);
+      if (isReplacing) {
+        await deletePendingReview(octokit!, owner, repoName, review!.pull_number, payload.replaceReviewId!);
+      }
+
+      const created = await createPendingReview(
+        octokit!, owner, repoName, review!.pull_number,
+        payload.comments, review!.reviewedHeadSha ?? null
+      );
+
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, review: created }));
+    } catch (err) {
+      res.writeHead(502, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: describeGitHubError(err) }));
     }
     return;
   }
