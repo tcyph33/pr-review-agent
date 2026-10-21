@@ -218,6 +218,62 @@ export async function refreshPRStatuses(
   return statusMap;
 }
 
+export interface DiffFile {
+  filename: string;
+  status: string;
+  additions: number;
+  deletions: number;
+  /** Unified diff for this file, or null when GitHub omits it (binary or oversized). */
+  patch: string | null;
+}
+
+export interface PullRequestDiff {
+  files: DiffFile[];
+  /** True when the PR has at least a full page of files, so `files` may be incomplete. */
+  truncated: boolean;
+}
+
+/**
+ * Fetches the per-file diff for a pull request.
+ *
+ * Reads a single page rather than paginating: a PR with more files than this is
+ * already past the point of being browsed file-by-file, and an unbounded fetch
+ * would stall the dashboard on a huge refactor. Callers surface `truncated`
+ * instead of silently showing a partial list.
+ *
+ * @param octokit - Authenticated GitHub client
+ * @param owner - Repository owner
+ * @param repo - Repository name
+ * @param pull_number - Pull request number
+ * @returns The per-file diffs, flagged truncated when a full page came back
+ */
+export async function getPullRequestDiff(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  pull_number: number
+): Promise<PullRequestDiff> {
+  const DIFF_FILE_PAGE_SIZE = 100;
+
+  const { data } = await octokit.rest.pulls.listFiles({
+    owner, repo, pull_number, per_page: DIFF_FILE_PAGE_SIZE,
+  });
+
+  // Keep only the fields the dashboard renders — the raw payload carries several
+  // URLs per file that would bloat the response for no benefit.
+  const files: DiffFile[] = data.map((file: PRFile) => ({
+    filename:  file.filename,
+    status:    file.status,
+    additions: file.additions,
+    deletions: file.deletions,
+    patch:     file.patch ?? null,
+  }));
+
+  const truncated: boolean = (files.length === DIFF_FILE_PAGE_SIZE);
+  const pullRequestDiff: PullRequestDiff = { files, truncated };
+  return pullRequestDiff;
+}
+
 export interface CommitSummary {
   sha: string;
   message: string;

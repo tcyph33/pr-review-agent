@@ -479,6 +479,89 @@
     .roll-nit     { background: var(--panel-2);   color: var(--ink-mute); }
     .roll-clean   { background: var(--good-tint); color: var(--good); }
 
+    /* ── Review modal: review text beside the PR diff ── */
+    .modal-wide { max-width: 1400px; }
+
+    .modal-header-actions { display: flex; align-items: center; gap: 10px; }
+
+    .modal-split { display: flex; flex: 1; min-height: 0; }
+
+    .modal-pane { overflow-y: auto; padding: 18px 22px; }
+    .modal-pane-review { flex: 0 0 46%; min-width: 0; }
+
+    .modal-pane-diff {
+      flex: 1;
+      min-width: 0;
+      border-left: 1px solid var(--line-soft);
+      background: var(--panel-2);
+    }
+
+    .modal-split.diff-hidden .modal-pane-diff { display: none; }
+    .modal-split.diff-hidden .modal-pane-review { flex: 1; }
+
+    @media (max-width: 1100px) {
+      .modal-split { flex-direction: column; }
+      .modal-pane-review { flex: none; }
+      .modal-pane-diff { border-left: none; border-top: 1px solid var(--line-soft); }
+    }
+
+    /* ── Files-changed panel ── */
+    .diff-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+    .diff-head-title { font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.14em; color: var(--ink-faint); }
+    .diff-head-stats { font-family: var(--mono); font-size: 0.72rem; color: var(--ink-mute); }
+
+    .diff-note { font-size: 0.78rem; color: var(--ink-mute); font-style: italic; padding: 8px 0 12px; }
+
+    .diff-truncated {
+      background: var(--warn-tint);
+      border: 1px solid var(--warn-border);
+      color: var(--warn);
+      border-radius: 8px;
+      padding: 9px 12px;
+      font-size: 0.74rem;
+      margin-bottom: 10px;
+    }
+
+    .diff-file { border: 1px solid var(--line); border-radius: 9px; background: var(--panel); margin-bottom: 8px; overflow: hidden; }
+
+    .diff-file-row { display: flex; align-items: center; gap: 9px; padding: 8px 11px; cursor: pointer; }
+    .diff-file-row:hover { background: var(--panel-2); }
+
+    .diff-caret { color: var(--ink-faint); font-size: 0.7rem; flex-shrink: 0; transition: transform 0.15s; }
+    .diff-file.open .diff-caret { transform: rotate(90deg); }
+
+    .diff-status { font-family: var(--mono); font-size: 0.68rem; font-weight: 700; width: 13px; text-align: center; flex-shrink: 0; }
+    .diff-status-added    { color: var(--good); }
+    .diff-status-removed  { color: var(--bad); }
+    .diff-status-modified { color: var(--warn); }
+    .diff-status-renamed  { color: var(--accent-deep); }
+    .diff-status-copied   { color: var(--accent-deep); }
+
+    .diff-name   { font-family: var(--mono); font-size: 0.73rem; color: var(--ink); flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .diff-counts { font-family: var(--mono); font-size: 0.68rem; flex-shrink: 0; white-space: nowrap; }
+
+    .diff-body { display: none; border-top: 1px solid var(--line); overflow-x: auto; }
+    .diff-file.open .diff-body { display: block; }
+
+    .diff-table { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 0.7rem; line-height: 1.55; }
+    .diff-ln {
+      width: 1%;
+      white-space: nowrap;
+      text-align: right;
+      padding: 0 7px;
+      color: var(--ink-faint);
+      user-select: none;
+      border-right: 1px solid var(--line);
+      vertical-align: top;
+    }
+    .diff-code { padding: 0 10px; white-space: pre; color: var(--ink-body); }
+    .diff-row-add .diff-code { background: var(--good-tint); }
+    .diff-row-del .diff-code { background: var(--bad-tint); }
+    .diff-row-hunk td { background: var(--panel-2); color: var(--ink-faint); padding: 3px 10px; font-size: 0.68rem; }
+    .diff-row-meta .diff-code { color: var(--ink-faint); font-style: italic; }
+
+    .diff-nopatch { padding: 10px 12px; font-size: 0.74rem; color: var(--ink-mute); font-style: italic; }
+
     .read-more {
       font-size: 0.62rem;
       font-weight: 700;
@@ -799,13 +882,21 @@
 
 <!-- Full review modal -->
 <div class="modal-overlay" id="review-modal" onclick="closeReviewModal(event)">
-  <div class="modal">
+  <div class="modal modal-wide">
     <div class="modal-header">
       <div class="modal-title" id="review-modal-title">Full Review</div>
-      <button class="modal-close" onclick="closeReviewModal()">✕</button>
+      <div class="modal-header-actions">
+        <button class="btn-ghost" id="diff-toggle-btn" onclick="toggleDiffPane()">Hide diff</button>
+        <button class="modal-close" onclick="closeReviewModal()">✕</button>
+      </div>
     </div>
-    <div class="modal-body">
-      <div class="review-md" id="review-modal-content"></div>
+    <div class="modal-split" id="modal-split">
+      <div class="modal-pane modal-pane-review">
+        <div class="review-md" id="review-modal-content"></div>
+      </div>
+      <div class="modal-pane modal-pane-diff">
+        <div id="diff-panel"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -1170,29 +1261,221 @@
     return `<div class="finding-rollup">${parts.join("")}</div>`;
   }
 
+  // ── PR diff panel ──
+  const DIFF_STATUS_LETTER = {
+    added: "A", removed: "D", modified: "M",
+    renamed: "R", copied: "C", changed: "M", unchanged: "=",
+  };
+  const DIFF_PANE_HIDDEN_KEY = "diffPaneHidden";
+
+  const diffCacheByReviewId = new Map();
+  let currentDiffFiles = [];
+
+  // Tracked in memory with localStorage as a mirror, so the toggle still works
+  // when storage is unavailable (private window, blocked site data).
+  let diffPaneHidden = (() => {
+    try { return localStorage.getItem(DIFF_PANE_HIDDEN_KEY) === "true"; } catch { return false; }
+  })();
+
+  // Parses a unified diff into rows carrying both old and new line numbers.
+  // The line numbers are what lets a finding be located inside a hunk, rather
+  // than the rows only being colour-coded.
+  function parsePatch(patch) {
+    const rows = [];
+    let oldLineNumber = 0;
+    let newLineNumber = 0;
+
+    for (const line of String(patch ?? "").split("\n")) {
+      // Trailing artefact of the split, not a diff row
+      if (line === "") continue;
+
+      // A hunk header restarts both counters at the hunk's declared start lines
+      const hunkMatch = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      if (hunkMatch) {
+        oldLineNumber = parseInt(hunkMatch[1], 10);
+        newLineNumber = parseInt(hunkMatch[2], 10);
+        rows.push({ type: "hunk", oldLine: null, newLine: null, text: line });
+        continue;
+      }
+
+      // Classify by diff marker, advancing only the side the row exists on
+      const marker = line[0];
+      if (marker === "+") {
+        rows.push({ type: "add", oldLine: null, newLine: newLineNumber, text: line.slice(1) });
+        newLineNumber += 1;
+      } else if (marker === "-") {
+        rows.push({ type: "del", oldLine: oldLineNumber, newLine: null, text: line.slice(1) });
+        oldLineNumber += 1;
+      } else if (marker === "\\") {
+        rows.push({ type: "meta", oldLine: null, newLine: null, text: line });
+      } else {
+        rows.push({ type: "ctx", oldLine: oldLineNumber, newLine: newLineNumber, text: line.slice(1) });
+        oldLineNumber += 1;
+        newLineNumber += 1;
+      }
+    }
+
+    return rows;
+  }
+
+  function renderDiffRows(rows) {
+    const rowsHtml = rows.map((row) => {
+      if (row.type === "hunk") {
+        return `<tr class="diff-row-hunk"><td colspan="3">${escHtml(row.text)}</td></tr>`;
+      }
+      if (row.type === "meta") {
+        return `<tr class="diff-row-meta"><td class="diff-ln"></td><td class="diff-ln"></td><td class="diff-code">${escHtml(row.text)}</td></tr>`;
+      }
+      const rowClass = row.type === "add" ? "diff-row-add" : row.type === "del" ? "diff-row-del" : "diff-row-ctx";
+      const marker   = row.type === "add" ? "+" : row.type === "del" ? "-" : " ";
+      return `<tr class="${rowClass}" data-new-line="${row.newLine ?? ""}">
+          <td class="diff-ln">${row.oldLine ?? ""}</td>
+          <td class="diff-ln">${row.newLine ?? ""}</td>
+          <td class="diff-code">${escHtml(marker + row.text)}</td>
+        </tr>`;
+    }).join("");
+    return `<table class="diff-table">${rowsHtml}</table>`;
+  }
+
+  function renderDiffFileBody(file) {
+    const hasPatch = Boolean(file && file.patch);
+    if (!hasPatch) {
+      return `<div class="diff-nopatch">No inline diff — GitHub omits the patch for binary and very large files.</div>`;
+    }
+    return renderDiffRows(parsePatch(file.patch));
+  }
+
+  function renderDiffFileRow(file, index) {
+    const status = String(file.status ?? "modified");
+    const letter = DIFF_STATUS_LETTER[status] ?? "M";
+    return `
+      <div class="diff-file" id="diff-file-${index}">
+        <div class="diff-file-row" onclick="toggleDiffFile(${index})">
+          <span class="diff-caret">▸</span>
+          <span class="diff-status diff-status-${escHtml(status)}" title="${escHtml(status)}">${letter}</span>
+          <span class="diff-name">${escHtml(file.filename)}</span>
+          <span class="diff-counts"><span class="diff-add">+${file.additions ?? 0}</span> <span class="diff-del">−${file.deletions ?? 0}</span></span>
+        </div>
+        <div class="diff-body"></div>
+      </div>`;
+  }
+
+  function toggleDiffFile(index) {
+    const fileElement = document.getElementById(`diff-file-${index}`);
+    if (!fileElement) return;
+
+    // Render the patch on first open only. Building every file's rows up front
+    // would put tens of thousands of hidden table rows in the DOM on a large PR.
+    const bodyElement  = fileElement.querySelector(".diff-body");
+    const isOpening    = !fileElement.classList.contains("open");
+    const isUnrendered = bodyElement.dataset.rendered !== "true";
+    if (isOpening && isUnrendered) {
+      bodyElement.innerHTML = renderDiffFileBody(currentDiffFiles[index]);
+      bodyElement.dataset.rendered = "true";
+    }
+
+    fileElement.classList.toggle("open");
+  }
+
+  function renderDiffPanel(diff, review) {
+    currentDiffFiles = diff.files;
+
+    const shownCount = diff.files.length;
+    const totalCount = review.filesChanged ?? shownCount;
+
+    const header = `
+      <div class="diff-head">
+        <span class="diff-head-title">Files changed</span>
+        <span class="diff-head-stats">${totalCount} · <span class="diff-add">+${review.additions ?? 0}</span> <span class="diff-del">−${review.deletions ?? 0}</span></span>
+      </div>`;
+
+    const hasFiles = shownCount > 0;
+    if (!hasFiles) {
+      return header + `<div class="diff-note">No file changes reported for this PR.</div>`;
+    }
+
+    const isTruncated = diff.truncated && totalCount > shownCount;
+    const truncationNote = isTruncated
+      ? `<div class="diff-truncated">Showing the first ${shownCount} of ${totalCount} files. Open the PR on GitHub for the rest.</div>`
+      : "";
+
+    const fileRows = diff.files.map((file, index) => renderDiffFileRow(file, index)).join("");
+    return header + truncationNote + fileRows;
+  }
+
+  async function fetchDiffFromServer(reviewId) {
+    const response = await fetch(`/api/diff/${encodeURIComponent(reviewId)}`);
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error ?? `HTTP ${response.status}`);
+    }
+    const diff = await response.json();
+    return diff;
+  }
+
+  async function fetchDiff(review) {
+    if (diffCacheByReviewId.has(review.id)) {
+      return diffCacheByReviewId.get(review.id);
+    }
+    const diff = MOCK_MODE ? mockDiff(review) : await fetchDiffFromServer(review.id);
+    diffCacheByReviewId.set(review.id, diff);
+    return diff;
+  }
+
+  async function loadDiffPanel(review) {
+    const panelElement = document.getElementById("diff-panel");
+    panelElement.innerHTML = `<div class="diff-note">Loading diff…</div>`;
+    try {
+      const diff = await fetchDiff(review);
+      panelElement.innerHTML = renderDiffPanel(diff, review);
+    } catch (err) {
+      currentDiffFiles = [];
+      panelElement.innerHTML = `<div class="diff-note">Could not load the diff: ${escHtml(err.message)}</div>`;
+    }
+  }
+
+  function applyDiffPaneVisibility() {
+    document.getElementById("modal-split").classList.toggle("diff-hidden", diffPaneHidden);
+    document.getElementById("diff-toggle-btn").textContent = diffPaneHidden ? "Show diff" : "Hide diff";
+  }
+
+  function toggleDiffPane() {
+    diffPaneHidden = !diffPaneHidden;
+    try { localStorage.setItem(DIFF_PANE_HIDDEN_KEY, String(diffPaneHidden)); } catch { /* convenience only */ }
+    applyDiffPaneVisibility();
+  }
+
   function openReviewModalByIdx(el) {
     const idx = parseInt(el.getAttribute('data-review-idx'), 10);
     const r = filteredReviews[idx];
     if (!r) return;
-    openReviewModal(r.title, r.feedback);
+    openReviewModal(r);
   }
 
-  function openReviewModal(title, feedback) {
-    document.getElementById('review-modal-title').textContent = title;
+  function openReviewModal(review) {
+    document.getElementById('review-modal-title').textContent = review.title;
     const content = document.getElementById('review-modal-content');
-    const parsed  = parseFindings(feedback);
+    const parsed  = parseFindings(review.feedback);
     content.innerHTML = parsed
       ? renderMarkdown(parsed.before) + renderFindings(parsed.findings) + renderMarkdown(parsed.after)
       : `<div class="findings-notice">Couldn't read structured findings in this review — showing the raw text below.</div>`
-        + renderMarkdown(feedback);
+        + renderMarkdown(review.feedback);
     // Render the verdict value as a colored chip, matching the card header
     content.querySelectorAll('h1, h2, h3').forEach(h => {
       if (!/^(verdict|decision|recommendation)$/i.test(h.textContent.trim())) return;
       const next = h.nextElementSibling;
       if (next && next.tagName === 'P') next.innerHTML = verdictChip(next.textContent.trim());
     });
+
+    // Reset both panes to the top — the modal element is reused across reviews
+    content.parentElement.scrollTop = 0;
+    applyDiffPaneVisibility();
+
     document.getElementById('review-modal').classList.add('visible');
     document.body.style.overflow = 'hidden';
+
+    // Fire and forget: the review text is already readable while the diff loads
+    loadDiffPanel(review);
   }
 
   function closeReviewModal(e) {
@@ -1511,6 +1794,103 @@
         feedback: "## Verdict\nApprove\n\n## Summary\nToken bump is clean and the contrast fixes bring all text past **WCAG AA**. No regressions found in the snapshot diff.",
       },
     ];
+  }
+
+  // Hunk line numbers here are chosen so each mock finding's line lands on a real
+  // changed line, which is what makes the per-finding diff lookup testable.
+  function mockDiff(review) {
+    const patch = (lines) => lines.join("\n");
+
+    const byReviewId = {
+      "mock-1": [
+        { filename: "src/limiter/bucket.ts", status: "modified", additions: 88, deletions: 12, patch: patch([
+          "@@ -37,8 +37,9 @@ export async function consume(id: string) {",
+          "   const limit = this.options.limit;",
+          "   const windowMs = this.options.windowMs;",
+          "   const key = bucketKey(id);",
+          "   const count = await redis.incr(key);",
+          "   const windowSeconds = Math.ceil(windowMs / 1000);",
+          "-  await redis.expire(key, 60);",
+          "+  await redis.expire(key, windowSeconds);",
+          "+  this.metrics.observe(count);",
+          "   return count <= limit;",
+          " }",
+        ]) },
+        { filename: "src/limiter/lua/check.lua", status: "added", additions: 22, deletions: 0, patch: patch([
+          "@@ -0,0 +1,5 @@",
+          "+local current = redis.call('INCR', KEYS[1])",
+          "+if current == 1 then",
+          "+  redis.call('PEXPIRE', KEYS[1], ARGV[1])",
+          "+end",
+          "+return current",
+        ]) },
+        { filename: "docs/limiter-diagram.png", status: "added", additions: 0, deletions: 0, patch: null },
+      ],
+      "mock-2": [
+        { filename: "src/hooks/useFormValidation.ts", status: "modified", additions: 142, deletions: 96, patch: patch([
+          "@@ -112,9 +112,11 @@ export function useFormValidation(schema: Schema) {",
+          "   const [errors, setErrors] = useState<Errors>({});",
+          "   const [pending, setPending] = useState<Pending>({});",
+          " ",
+          "   const runValidator = useCallback(async (field: string, value: unknown) => {",
+          "     setPending((prev) => ({ ...prev, [field]: true }));",
+          "     const result = await schema.validateField(field, value);",
+          "-    setErrors((prev) => ({ ...prev, [field]: result.error }));",
+          "+    setErrors((prev) => ({ ...prev, [field]: result.error }));",
+          "+    setPending((prev) => ({ ...prev, [field]: false }));",
+          "     return result.valid;",
+          "   }, [schema]);",
+        ]) },
+        { filename: "src/components/EmailField.tsx", status: "modified", additions: 18, deletions: 9, patch: patch([
+          "@@ -48,8 +48,8 @@ export function EmailField({ value, onChange, error }: Props) {",
+          "   return (",
+          "     <div className=\"field\">",
+          "       <label htmlFor=\"email\">Email</label>",
+          "       <input",
+          "         id=\"email\"",
+          "         type=\"email\"",
+          "-        aria-describedby=\"email-error\"",
+          "+        className={error ? \"input input-error\" : \"input\"}",
+          "         value={value}",
+          "       />",
+        ]) },
+        { filename: "src/components/SettingsLayout.tsx", status: "renamed", additions: 4, deletions: 4, patch: patch([
+          "@@ -1,4 +1,4 @@",
+          "-import { SettingsForm } from \"./SettingsForm\";",
+          "+import { SettingsForm } from \"./forms/SettingsForm\";",
+          " ",
+          " export function SettingsLayout() {",
+        ]) },
+      ],
+      "mock-3": [
+        { filename: "terraform/rds.tf", status: "modified", additions: 41, deletions: 8, patch: patch([
+          "@@ -25,10 +25,11 @@ resource \"aws_db_instance\" \"staging\" {",
+          "   identifier        = \"staging-primary\"",
+          "   instance_class    = \"db.t4g.medium\"",
+          "   allocated_storage = 400",
+          "   storage_encrypted = true",
+          " ",
+          "-  storage_type = \"gp2\"",
+          "+  storage_type = \"gp3\"",
+          "+  iops         = 3000",
+          " ",
+          "   performance_insights_enabled = true",
+          "   performance_insights_retention_period = 7",
+        ]) },
+        { filename: "terraform/outputs.tf", status: "modified", additions: 16, deletions: 4, patch: patch([
+          "@@ -8,3 +8,5 @@ output \"db_endpoint\" {",
+          "   value = aws_db_instance.staging.endpoint",
+          " }",
+          "+",
+          "+output \"db_storage_type\" {",
+          "+  value = aws_db_instance.staging.storage_type",
+          "+}",
+        ]) },
+      ],
+    };
+
+    const files = byReviewId[review.id] ?? [];
+    return { files, truncated: false };
   }
 
   async function loadReviews(callRefresh = false) {

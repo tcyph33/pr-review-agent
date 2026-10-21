@@ -8,7 +8,7 @@ import os from "os";
 import path from "path";
 import { execSync } from "child_process";
 import { fileURLToPath } from "url";
-import { createOctokit, refreshPRData } from "./lib/github.ts";
+import { createOctokit, refreshPRData, getPullRequestDiff } from "./lib/github.ts";
 import { loadReviews, saveReviews, deleteReviewLog } from "./lib/storage.ts";
 import type { PRReview } from "./lib/storage.ts";
 
@@ -234,6 +234,41 @@ const server = http.createServer(async (req, res) => {
       const message = err instanceof Error ? err.message : String(err);
       res.writeHead(500, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: message }));
+    }
+    return;
+  }
+
+  // ── GET /api/diff/:id ─────────────────────────────────────────────────────
+  if (req.method === "GET" && url.pathname.startsWith("/api/diff/")) {
+    const reviewId: string = decodeURIComponent(url.pathname.replace("/api/diff/", ""));
+    const review: PRReview | null = findReview(reviewId);
+
+    // Reject an unknown review before spending a GitHub call on it
+    const isReviewMissing: boolean = (review === null);
+    if (isReviewMissing) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Review not found" }));
+      return;
+    }
+
+    // Reject when the server has no credentials to reach GitHub with
+    const isClientMissing: boolean = (octokit === null);
+    if (isClientMissing) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "GITHUB_API_TOKEN not set" }));
+      return;
+    }
+
+    // Fetch the per-file diff for the dashboard's files-changed panel
+    try {
+      const [owner, repoName] = review!.repo.split("/");
+      const diff = await getPullRequestDiff(octokit!, owner, repoName, review!.pull_number);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(diff));
+    } catch (err) {
+      const message: string = err instanceof Error ? err.message : String(err);
+      res.writeHead(502, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: `Could not load diff from GitHub: ${message}` }));
     }
     return;
   }
