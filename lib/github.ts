@@ -33,42 +33,81 @@ export interface RepoConfig {
   assigneeRepos: string[];        // repos to watch for assignee
 }
 
+export interface ReviewCandidate {
+  item: SearchPRItem;
+  /** The strongest reason this PR is yours. Drives which date counts as "since when". */
+  triggerType: TriggerType;
+}
+
+/**
+ * Finds the open PRs that are the user's responsibility, in three tiers.
+ *
+ * A PR matching more than one tier keeps only the strongest reason, because that
+ * reason decides which date counts as the moment it landed on the user.
+ *
+ * @param octokit - Authenticated GitHub client
+ * @param username - Login whose PRs to find
+ * @param config - Repo lists scoping the assignee and review-requested tiers
+ * @returns One candidate per distinct PR, tagged with its highest-priority trigger
+ */
 export async function getPRsNeedingReview(
   octokit: Octokit,
   username: string,
   config: RepoConfig
-): Promise<SearchPRItem[]> {
-  const { reviewRequestedRepos, assigneeRepos } = config;
+): Promise<ReviewCandidate[]> {
+  const SEARCH_PAGE_SIZE = 50;
 
-  if (reviewRequestedRepos.length === 0 && assigneeRepos.length === 0) {
-    throw new Error(
-      "No repos configured. Set REVIEW_REQUESTED_REPOS and/or REVIEW_ASSIGNEE_REPOS in your environment."
-    );
-  }
+  // PRs the user commented on can be anywhere, so that tier is bounded by
+  // recency instead of by repo. A PR untouched for this long is not waiting.
+  const COMMENTER_RECENCY_DAYS = 90;
 
-  const results = new Map<number, SearchPRItem>();
+  const candidates = new Map<number, ReviewCandidate>();
 
-  // Query 1: review-requested on REVIEW_REQUESTED_REPOS
-  if (reviewRequestedRepos.length > 0) {
-    const repoFilters = reviewRequestedRepos.map(r => `repo:${r}`).join(" ");
-    const { data } = await octokit.rest.search.issuesAndPullRequests({
-      q: `is:pr is:open review-requested:${username} ${repoFilters}`,
-      per_page: 50,
-    });
-    for (const item of data.items) results.set(item.id, item);
-  }
+  // First tier to claim a PR keeps it, so tiers must run strongest first
+  const claim = (items: SearchPRItem[], triggerType: TriggerType): void => {
+    for (const item of items) {
+      const isUnclaimed = !candidates.has(item.id);
+      if (isUnclaimed) candidates.set(item.id, { item, triggerType });
+    }
+  };
 
-  // Query 2: assignee on REVIEW_ASSIGNEE_REPOS
-  if (assigneeRepos.length > 0) {
-    const repoFilters = assigneeRepos.map(r => `repo:${r}`).join(" ");
+  // Tier 1 — assigned to you: the strongest claim, so it wins any overlap
+  const hasAssigneeRepos = config.assigneeRepos.length > 0;
+  if (hasAssigneeRepos) {
+    const repoFilters = config.assigneeRepos.map(repo => `repo:${repo}`).join(" ");
     const { data } = await octokit.rest.search.issuesAndPullRequests({
       q: `is:pr is:open assignee:${username} ${repoFilters}`,
-      per_page: 50,
+      per_page: SEARCH_PAGE_SIZE,
     });
-    for (const item of data.items) results.set(item.id, item);
+    claim(data.items, "assignee");
   }
 
-  return Array.from(results.values());
+  // Tier 2 — review requested from you
+  const hasReviewRequestedRepos = config.reviewRequestedRepos.length > 0;
+  if (hasReviewRequestedRepos) {
+    const repoFilters = config.reviewRequestedRepos.map(repo => `repo:${repo}`).join(" ");
+    const { data } = await octokit.rest.search.issuesAndPullRequests({
+      q: `is:pr is:open review-requested:${username} ${repoFilters}`,
+      per_page: SEARCH_PAGE_SIZE,
+    });
+    claim(data.items, "review-requested");
+  }
+
+  // Tier 3 — PRs you have commented on, deliberately not repo-scoped: the point
+  // is to keep tracking threads you engaged with outside the watched repos, so
+  // commits landing after your last comment are not missed. The exclusions drop
+  // PRs already covered by a stronger tier or authored by you.
+  const recencyCutoff = new Date(Date.now() - (COMMENTER_RECENCY_DAYS * 86400000))
+    .toISOString()
+    .slice(0, 10);
+  const { data: commented } = await octokit.rest.search.issuesAndPullRequests({
+    q: `is:pr is:open commenter:${username} -author:${username} -assignee:${username}`
+      + ` -review-requested:${username} updated:>=${recencyCutoff}`,
+    per_page: SEARCH_PAGE_SIZE,
+  });
+  claim(commented.items, "commenter");
+
+  return Array.from(candidates.values());
 }
 
 export async function getPRDetails(
@@ -94,7 +133,7 @@ export async function getPRFiles(
   return data;
 }
 
-export type TriggerType = "review-requested" | "assignee" | "both";
+export type TriggerType = "assignee" | "review-requested" | "commenter";
 
 async function getReviewerRequestedAt(
   octokit: Octokit,
@@ -138,6 +177,47 @@ async function getAssigneeRequestedAt(
   }
 }
 
+async function getLastCommentAt(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  pull_number: number,
+  username: string
+): Promise<string | null> {
+  try {
+    // Both kinds count: a PR conversation comment and an inline review comment
+    const [conversation, inline] = await Promise.all([
+      octokit.rest.issues.listComments({ owner, repo, issue_number: pull_number, per_page: 100 }),
+      octokit.rest.pulls.listReviewComments({ owner, repo, pull_number, per_page: 100 }),
+    ]);
+
+    const ownCommentDates = [...conversation.data, ...inline.data]
+      .filter((comment) => comment.user?.login === username)
+      .map((comment) => comment.created_at)
+      .sort();
+
+    const hasComments = ownCommentDates.length > 0;
+    return hasComments ? ownCommentDates[ownCommentDates.length - 1] : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolves when this PR became the user's responsibility, which depends on why.
+ *
+ * Each tier measures from the moment the claim was made: being assigned, having
+ * a review requested, or — for a PR you merely commented on — your own most
+ * recent comment, since that is the point after which new commits matter.
+ *
+ * @param octokit - Authenticated GitHub client
+ * @param owner - Repository owner
+ * @param repo - Repository name
+ * @param pull_number - Pull request number
+ * @param username - Login whose responsibility is being dated
+ * @param triggerType - The tier that claimed this PR
+ * @returns The ISO date, or null when GitHub does not report one
+ */
 export async function getReviewRequestedAt(
   octokit: Octokit,
   owner: string,
@@ -146,21 +226,13 @@ export async function getReviewRequestedAt(
   username: string,
   triggerType: TriggerType
 ): Promise<string | null> {
-  const dates: string[] = [];
-
-  if (triggerType === "review-requested" || triggerType === "both") {
-    const d = await getReviewerRequestedAt(octokit, owner, repo, pull_number, username);
-    if (d) dates.push(d);
+  if (triggerType === "assignee") {
+    return getAssigneeRequestedAt(octokit, owner, repo, pull_number, username);
   }
-
-  if (triggerType === "assignee" || triggerType === "both") {
-    const d = await getAssigneeRequestedAt(octokit, owner, repo, pull_number, username);
-    if (d) dates.push(d);
+  if (triggerType === "review-requested") {
+    return getReviewerRequestedAt(octokit, owner, repo, pull_number, username);
   }
-
-  if (dates.length === 0) return null;
-  // Return the oldest date — when you first became responsible for this PR
-  return dates.sort()[0];
+  return getLastCommentAt(octokit, owner, repo, pull_number, username);
 }
 
 export async function getMyReviewState(

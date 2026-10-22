@@ -407,28 +407,28 @@ async function main(): Promise<void> {
   }
 
   // ── Step 2: find PRs needing review ───────────────────────────────────────
-  tee(`\n🔍  Searching for PRs requesting review from ${username}...`);
-  const prs = await getPRsNeedingReview(octokit, username, repoConfig);
-  tee(`    Found ${prs.length} PR(s) needing review.`);
+  tee(`\n🔍  Searching for PRs that are ${username}'s responsibility...`);
+  const candidates = await getPRsNeedingReview(octokit, username, repoConfig);
+  tee(`    Found ${candidates.length} PR(s) across all tiers.`);
 
-  if (prs.length === 0) {
+  // Record why each PR was picked up, since the tier decides which date counts
+  // as "since when" and that is otherwise invisible after the fact
+  for (const candidate of candidates) {
+    orchLog(`    [${candidate.triggerType}] ${candidate.item.html_url}`);
+  }
+
+  if (candidates.length === 0) {
     tee("\n✅  No new PRs to review.");
     tee("Done! Open http://localhost:3000/dashboard/ to view the dashboard.");
     process.exit(0);
   }
 
   // ── Step 3: review each PR in parallel via Claude Code ────────────────────
-  tee(`\n📋  Reviewing ${prs.length} PR(s) in parallel via Claude Code...\n`);
+  tee(`\n📋  Reviewing ${candidates.length} PR(s) in parallel via Claude Code...\n`);
 
-  const results   = await Promise.all(prs.map((pr) => {
-    const prRepo = pr.repository_url?.replace("https://api.github.com/repos/", "") ?? "";
-    const inRequested = repoConfig.reviewRequestedRepos.includes(prRepo);
-    const inAssignee  = repoConfig.assigneeRepos.includes(prRepo);
-    const triggerType: TriggerType =
-      inRequested && inAssignee ? "both" :
-      inAssignee ? "assignee" : "review-requested";
-    return reviewPR(pr, skill, username, triggerType, orchLog);
-  }));
+  const results = await Promise.all(
+    candidates.map((candidate) => reviewPR(candidate.item, skill, username, candidate.triggerType, orchLog))
+  );
   const succeeded = results.filter(r => r.reviewStatus === "success").length;
   const failed    = results.filter(r => r.reviewStatus === "failed").length;
 
