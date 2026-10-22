@@ -270,7 +270,8 @@ async function reviewPR(
       filesChanged: 0, additions: 0, deletions: 0, feedback: "",
       reviewState: "PENDING", reviewStatus: "failed", prStatus: "open",
       prCreatedAt: new Date().toISOString(), reviewRequestedAt: null, triggerType: 'review-requested' as TriggerType,
-      lastReviewSubmittedAt: null, newCommits: [], commitsSeenAt: null, reviewedHeadSha: null,
+      lastReviewSubmittedAt: null, newCommits: [], commitsSeenAt: null,
+      reviewedHeadSha: null, currentHeadSha: null, commitsSeenSha: null,
       reviewedAt: new Date().toISOString(), logFile,
     };
   }
@@ -307,7 +308,8 @@ async function reviewPR(
       deletions: files.reduce((s, f) => s + f.deletions, 0),
       feedback, reviewState, reviewStatus: "success", prStatus: "open",
       lastReviewSubmittedAt: null, newCommits: [], commitsSeenAt: null,
-      reviewedHeadSha: details.head.sha,
+      // A freshly generated review is by definition current, so both SHAs match
+      reviewedHeadSha: details.head.sha, currentHeadSha: details.head.sha, commitsSeenSha: null,
       prCreatedAt: details.created_at, reviewRequestedAt, triggerType, reviewedAt: new Date().toISOString(), logFile,
     };
   } catch (err) {
@@ -336,7 +338,8 @@ async function reviewPR(
       repo: `${owner}/${repo}`, pull_number: pullNumber,
       author, branch, filesChanged, additions, deletions,
       feedback: "", reviewState: "PENDING", reviewStatus: "failed", prStatus: "open",
-      lastReviewSubmittedAt: null, newCommits: [], commitsSeenAt: null, reviewedHeadSha,
+      lastReviewSubmittedAt: null, newCommits: [], commitsSeenAt: null,
+      reviewedHeadSha, currentHeadSha: reviewedHeadSha, commitsSeenSha: null,
       prCreatedAt, reviewRequestedAt: null, triggerType, reviewedAt: new Date().toISOString(), logFile,
     };
   }

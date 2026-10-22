@@ -57,6 +57,16 @@ export interface PRReview {
   // Reviews recorded before this field existed have it absent, so readers must
   // treat a missing value as unknown rather than current.
   reviewedHeadSha: string | null;
+
+  // The PR's head SHA as of the last metadata refresh. Unlike reviewedHeadSha
+  // this is expected to move, and the gap between the two is what tells the
+  // dashboard that the stored findings now describe older code.
+  currentHeadSha: string | null;
+
+  // Head SHA when the user last dismissed this PR's new commits. Dismissal is
+  // recorded as a SHA rather than only a timestamp so a force-push or rebase —
+  // which can carry commit dates older than the review — still re-surfaces.
+  commitsSeenSha: string | null;
 }
 
 // ── Orchestration log helpers ─────────────────────────────────────────────────

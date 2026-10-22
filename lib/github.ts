@@ -420,6 +420,8 @@ export interface PRRefreshData {
   deletions: number;
   filesChanged: number;
   newCommits: CommitSummary[];
+  /** The PR's head SHA right now, for comparison against the SHA a review was generated from. */
+  headSha: string;
 }
 
 export async function refreshPRData(
@@ -428,7 +430,8 @@ export async function refreshPRData(
   repo: string,
   pull_number: number,
   username: string,
-  commitsSeenAt: string | null
+  commitsSeenAt: string | null,
+  reviewedAt: string
 ): Promise<PRRefreshData> {
   const [reviewsData, filesData, prData] = await Promise.all([
     octokit.rest.pulls.listReviews({ owner, repo, pull_number }),
@@ -463,8 +466,13 @@ export async function refreshPRData(
   const deletions   = files.reduce((s, f) => s + f.deletions, 0);
   const filesChanged = files.length;
 
-  // New commits since last seen or last review submitted
-  const since = commitsSeenAt ?? lastReviewSubmittedAt;
+  // Commits since the agent last analyzed this PR, unless the user has dismissed
+  // them. The baseline is deliberately the agent's run rather than the user's
+  // last submitted review: this list exists to answer "what changed since these
+  // findings were produced", which is what decides whether a re-run is needed.
+  // A review the user has never submitted feedback on would otherwise have no
+  // baseline at all and always report zero commits.
+  const since = commitsSeenAt ?? reviewedAt;
   let newCommits: CommitSummary[] = [];
   if (since) {
     try {
@@ -490,5 +498,9 @@ export async function refreshPRData(
     }
   }
 
-  return { reviewState, lastReviewSubmittedAt, prStatus, additions, deletions, filesChanged, newCommits };
+  return {
+    reviewState, lastReviewSubmittedAt, prStatus,
+    additions, deletions, filesChanged, newCommits,
+    headSha: prData.data.head.sha,
+  };
 }

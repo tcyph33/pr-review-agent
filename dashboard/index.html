@@ -293,7 +293,35 @@
     .card-title:hover { color: var(--accent-deep); }
     .card-title-failed { color: var(--bad); }
 
-    .card-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; align-items: center; }
+    .card-meta { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; margin-top: 11px; }
+
+    /* The one chip answering "what now". The left bar gives it weight without
+       needing a heavier fill than the quieter facts beneath it. */
+    .action-chip {
+      display: inline-flex;
+      align-items: center;
+      font-size: 0.65rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      padding: 4px 11px;
+      border-radius: 6px;
+      border-left: 3px solid currentColor;
+      white-space: nowrap;
+    }
+
+    .action-bad    { background: var(--bad-tint);    color: var(--bad); }
+    .action-warn   { background: var(--warn-tint);   color: var(--warn); }
+    .action-accent { background: var(--accent-tint); color: var(--accent-deep); }
+    .action-good   { background: var(--good-tint);   color: var(--good); }
+    .action-mute   { background: var(--panel-2);     color: var(--ink-mute); }
+
+    .action-chip-link { cursor: pointer; }
+    .action-chip-link:hover { text-decoration: underline; }
+
+    .card-facts { font-size: 0.72rem; color: var(--ink-faint); line-height: 1.5; }
+    .fact-link  { color: var(--accent-deep); cursor: pointer; }
+    .fact-link:hover { text-decoration: underline; }
 
     .badge {
       font-size: 0.66rem;
@@ -997,6 +1025,7 @@
 <div class="controls-bar" id="controls-bar" style="display:none">
   <span class="controls-label">Sort:</span>
   <select id="sort-select" onchange="applyControls()">
+    <option value="attention">Needs attention first</option>
     <option value="reviewed-desc">Recently reviewed</option>
     <option value="age-desc">Oldest PR first</option>
     <option value="age-asc">Newest PR first</option>
@@ -1009,18 +1038,14 @@
   <select id="filter-repo" onchange="applyControls()">
     <option value="all">All repos</option>
   </select>
-  <span class="controls-label">State:</span>
-  <select id="filter-state" onchange="applyControls()">
-    <option value="all">All states</option>
-    <option value="PENDING">Pending</option>
-    <option value="COMMENTED">Commented</option>
-    <option value="CHANGES_REQUESTED">Changes requested</option>
-    <option value="APPROVED">Approved</option>
-  </select>
-  <span class="controls-label">Status:</span>
-  <select id="filter-status" onchange="applyControls()">
-    <option value="all">All</option>
-    <option value="open">Open</option>
+  <span class="controls-label">Action:</span>
+  <select id="filter-action" onchange="applyControls()">
+    <option value="all">All actions</option>
+    <option value="needs-review">Needs your review</option>
+    <option value="rerun">Agent re-run needed</option>
+    <option value="waiting-author">Waiting on author</option>
+    <option value="approved">Approved</option>
+    <option value="failed">Review failed</option>
     <option value="merged">Merged</option>
     <option value="closed">Closed</option>
   </select>
@@ -1089,7 +1114,7 @@
     <div class="commits-modal-body" id="commits-modal-body"></div>
     <div class="commits-modal-footer">
       <button class="btn-ghost" onclick="closeCommitsModal()">Close</button>
-      <button class="btn-secondary" id="commits-mark-seen-btn" onclick="markSeenFromModal()">Mark as seen</button>
+      <button class="btn-queue" id="commits-mark-seen-btn" onclick="markSeenFromModal()">No re-run needed</button>
     </div>
   </div>
 </div>
@@ -1162,19 +1187,93 @@
     return Math.floor((Date.now() - new Date(r.reviewRequestedAt).getTime()) / 86400000);
   }
 
+  // ── What to do with each PR ──
+  // One state per review, answering "what now" rather than reporting raw GitHub
+  // fields. `order` drives the attention sort; lower means more urgent.
+  const REVIEW_ACTIONS = {
+    failed:           { label: "Review failed",       tone: "bad",    order: 0 },
+    rerun:            { label: "Agent re-run needed", tone: "warn",   order: 1 },
+    "needs-review":   { label: "Needs your review",   tone: "accent", order: 2 },
+    "waiting-author": { label: "Waiting on author",   tone: "mute",   order: 3 },
+    approved:         { label: "Approved",            tone: "good",   order: 4 },
+    merged:           { label: "Merged",              tone: "mute",   order: 5 },
+    closed:           { label: "Closed",              tone: "mute",   order: 6 },
+  };
+
+  const REVIEW_STATE_TEXT = {
+    PENDING:           "no feedback from you yet",
+    COMMENTED:         "you commented",
+    CHANGES_REQUESTED:  "you requested changes",
+    APPROVED:          "you approved",
+  };
+
+  function deriveReviewAction(review) {
+    // A finished PR outranks everything else, including a failed agent run:
+    // there is nothing left to act on either way.
+    if (review.prStatus === "merged") return "merged";
+    if (review.prStatus === "closed") return "closed";
+
+    const hasFailed = review.reviewStatus === "failed";
+    if (hasFailed) return "failed";
+
+    // A moved head means the findings describe older code, so re-running the
+    // agent comes before writing another round of feedback against them.
+    const dismissedSha  = review.commitsSeenSha ?? review.reviewedHeadSha ?? null;
+    const canCompare    = Boolean(review.currentHeadSha) && Boolean(dismissedSha);
+    const isOutOfDate   = canCompare && review.currentHeadSha !== dismissedSha;
+    if (isOutOfDate) return "rerun";
+
+    // Either you have never given feedback, or the author has pushed since you did
+    const hasSubmitted = Boolean(review.lastReviewSubmittedAt);
+    const hasRespondedSince = (review.newCommits ?? []).some((commit) => {
+      return Boolean(commit.date) && commit.date > review.lastReviewSubmittedAt;
+    });
+    const needsReview = !hasSubmitted || hasRespondedSince;
+    if (needsReview) return "needs-review";
+
+    const isApproved = review.reviewState === "APPROVED";
+    if (isApproved) return "approved";
+
+    return "waiting-author";
+  }
+
+  function buildSupportingFacts(review) {
+    const facts = [];
+
+    const stateText = REVIEW_STATE_TEXT[review.reviewState ?? "PENDING"];
+    if (stateText) facts.push(escHtml(stateText));
+
+    const commitCount = (review.newCommits ?? []).length;
+    if (commitCount > 0) {
+      facts.push(
+        `<span class="fact-link" data-id="${escHtml(review.id)}" data-commits="${escHtml(JSON.stringify(review.newCommits))}" onclick="showCommitsFromBadge(this)">`
+        + `${commitCount} new commit${commitCount === 1 ? "" : "s"}</span>`
+      );
+    }
+
+    const waited = waitingDays(review);
+    const isWaitingLong = waited !== null && waited >= 3;
+    if (isWaitingLong) facts.push(`waiting ${waited} days`);
+
+    return facts.join(" · ");
+  }
+
   function renderSummary() {
-    const bar      = document.getElementById("summary-bar");
-    const open     = filteredReviews.filter(r => !r.prStatus || r.prStatus === "open");
-    const approved = open.filter(r => r.reviewState === "APPROVED").length;
-    const stale    = open.filter(r => { const wd = waitingDays(r); return wd !== null && wd >= 3; }).length;
-    const rereview = open.filter(r => r.newCommits && r.newCommits.length > 0).length;
-    const ages     = open.map(r => prAgeDays(r));
-    const oldest   = ages.length ? Math.max(...ages) : 0;
+    const bar     = document.getElementById("summary-bar");
+    const open    = filteredReviews.filter(r => !r.prStatus || r.prStatus === "open");
+    const actions = open.map(deriveReviewAction);
+
+    const needsYou   = actions.filter(action => action === "needs-review").length;
+    const needsRerun = actions.filter(action => action === "rerun").length;
+    const waitingLong = open.filter(r => { const wd = waitingDays(r); return wd !== null && wd >= 3; }).length;
+    const ages       = open.map(r => prAgeDays(r));
+    const oldest     = ages.length ? Math.max(...ages) : 0;
+
     bar.innerHTML = `
       <div class="stat"><div class="stat-value">${open.length}</div><div class="stat-label">Open PRs</div></div>
-      <div class="stat"><div class="stat-value">${approved}</div><div class="stat-label">Approved</div></div>
-      <div class="stat ${stale > 0 ? 'stat-warn' : ''}"><div class="stat-value">${stale}</div><div class="stat-label">Waiting 3+ Days</div></div>
-      <div class="stat ${rereview > 0 ? 'stat-warn' : ''}"><div class="stat-value">${rereview}</div><div class="stat-label">New Commits</div></div>
+      <div class="stat ${needsYou > 0 ? 'stat-warn' : ''}"><div class="stat-value">${needsYou}</div><div class="stat-label">Needs You</div></div>
+      <div class="stat ${needsRerun > 0 ? 'stat-warn' : ''}"><div class="stat-value">${needsRerun}</div><div class="stat-label">Agent Re-run</div></div>
+      <div class="stat ${waitingLong > 0 ? 'stat-warn' : ''}"><div class="stat-value">${waitingLong}</div><div class="stat-label">Waiting 3+ Days</div></div>
       <div class="stat ${oldest >= 7 ? 'stat-warn' : ''}"><div class="stat-value">${oldest === 1 ? '1 day' : oldest + ' days'}</div><div class="stat-label">Oldest PR</div></div>
     `;
   }
@@ -1193,15 +1292,19 @@
   function applyControls() {
     const sort   = document.getElementById("sort-select").value;
     const repo   = document.getElementById("filter-repo").value;
-    const state  = document.getElementById("filter-state").value;
-    const status = document.getElementById("filter-status").value;
+    const action = document.getElementById("filter-action").value;
 
     filteredReviews = reviews
-      .filter(r => repo   === "all" || r.repo        === repo)
-      .filter(r => state  === "all" || (r.reviewState || "PENDING") === state)
-      .filter(r => status === "all" || (r.prStatus    || "open")    === status);
+      .filter(r => repo   === "all" || r.repo === repo)
+      .filter(r => action === "all" || deriveReviewAction(r) === action);
 
     filteredReviews.sort((a, b) => {
+      // Most urgent action first, then oldest PR within the same action
+      if (sort === "attention") {
+        const byAction = REVIEW_ACTIONS[deriveReviewAction(a)].order - REVIEW_ACTIONS[deriveReviewAction(b)].order;
+        if (byAction !== 0) return byAction;
+        return prAgeDays(b) - prAgeDays(a);
+      }
       if (sort === "reviewed-desc") return new Date(b.reviewedAt).getTime() - new Date(a.reviewedAt).getTime();
       if (sort === "age-desc")      return prAgeDays(b) - prAgeDays(a);
       if (sort === "age-asc")       return prAgeDays(a) - prAgeDays(b);
@@ -1265,17 +1368,20 @@
         ? `${escHtml(r.repo)} · @${escHtml(r.author)} · reviewed ${timeAgo(r.reviewedAt)}`
         : `${escHtml(r.repo)} · @${escHtml(r.author)} · ${r.filesChanged} file${r.filesChanged !== 1 ? "s" : ""} · <span class="diff-add">+${r.additions}</span> <span class="diff-del">−${r.deletions}</span> · ${prAgeDays(r) === 1 ? '1 day old' : prAgeDays(r) + ' days old'}`;
 
-      const statusPills = failed
-        ? `<span class="badge badge-failed">Review Failed</span>`
-        : `${reviewStateBadge(r.reviewState || "PENDING")}
-           ${(() => {
-             const wd = waitingDays(r);
-             if (wd === null || wd < 3) return '';
-             const cls = wd >= 5 ? 'badge-waiting-high' : 'badge-waiting-medium';
-             return `<span class="badge ${cls}">Waiting ${wd} days</span>`;
-           })()}
-           ${(r.newCommits && r.newCommits.length > 0) ? `<span class="badge badge-commits" data-id="${escHtml(r.id)}" data-commits="${escHtml(JSON.stringify(r.newCommits || []))}" onclick="showCommitsFromBadge(this)">↑ ${r.newCommits.length} new commit${r.newCommits.length !== 1 ? 's' : ''}</span>` : ''}
-           ${prStatusBadge(r.prStatus)}`;
+      // One chip answering "what now", with the raw facts demoted beneath it.
+      // The chip opens the commit list when there is one, since deciding whether
+      // a re-run is really needed means looking at what landed.
+      const actionKey   = deriveReviewAction(r);
+      const action      = REVIEW_ACTIONS[actionKey];
+      const hasCommits  = (r.newCommits ?? []).length > 0;
+      const chipClass   = `action-chip action-${action.tone}${hasCommits ? " action-chip-link" : ""}`;
+      const chipHandler = hasCommits
+        ? ` data-id="${escHtml(r.id)}" data-commits="${escHtml(JSON.stringify(r.newCommits))}" onclick="showCommitsFromBadge(this)" title="See what changed"`
+        : "";
+
+      const statusPills = `
+        <span class="${chipClass}"${chipHandler}>${action.label}</span>
+        <div class="card-facts">${buildSupportingFacts(r)}</div>`;
 
       const cardBody = failed
         ? `<div class="card-body">
@@ -2309,24 +2415,6 @@
     document.body.style.overflow = '';
   }
 
-  function prStatusBadge(status) {
-    if (!status || status === "open") return "";
-    if (status === "merged") return '<span class="badge badge-status-merged">⎇ Merged</span>';
-    if (status === "closed") return '<span class="badge badge-status-closed">✕ Closed</span>';
-    return "";
-  }
-
-  function reviewStateBadge(state) {
-    const map = {
-      PENDING:           ["badge-state-pending",   "● Pending"],
-      COMMENTED:         ["badge-state-commented", "● Commented"],
-      CHANGES_REQUESTED: ["badge-state-changes",   "● Changes requested"],
-      APPROVED:          ["badge-state-approved",  "✓ Approved"],
-    };
-    const [cls, label] = map[state] || map["PENDING"];
-    return `<span class="badge ${cls}">${label}</span>`;
-  }
-
   function renderMarkdown(raw) {
     // Escape HTML first to prevent XSS, then apply markdown on top
     const escaped = String(raw)
@@ -2525,7 +2613,9 @@
         title: "Add rate limiting middleware with Redis-backed token buckets",
         url: "#", filesChanged: 6, additions: 312, deletions: 48,
         reviewedAt: daysAgo(0.1), prCreatedAt: daysAgo(2), reviewRequestedAt: daysAgo(1),
-        reviewState: "APPROVED", prStatus: "open", reviewStatus: "ok", logFile: "mock.log",
+        reviewState: "PENDING", prStatus: "open", reviewStatus: "ok", logFile: "mock.log",
+        lastReviewSubmittedAt: null,
+        reviewedHeadSha: "a1a1a1a", currentHeadSha: "a1a1a1a", commitsSeenSha: null,
         feedback: mockFeedback({
           verdict: "APPROVE WITH NITS",
           summary: "Solid implementation of **token bucket rate limiting** using Redis `INCR` with TTLs. Error handling falls back to allow-on-failure, which matches the stated availability goals, and tests cover both the burst and refill paths.",
@@ -2547,9 +2637,11 @@
         url: "#", filesChanged: 14, additions: 421, deletions: 380,
         reviewedAt: daysAgo(0.4), prCreatedAt: daysAgo(6), reviewRequestedAt: daysAgo(4),
         reviewState: "CHANGES_REQUESTED", prStatus: "open", reviewStatus: "ok", logFile: "mock.log",
+        lastReviewSubmittedAt: daysAgo(2),
+        reviewedHeadSha: "b2b2b2b", currentHeadSha: "c3c3c3c", commitsSeenSha: null,
         newCommits: [
-          { sha: "a1b2c3d", message: "Fix validation race on async fields", author: "jchen" },
-          { sha: "e4f5a6b", message: "Address review: debounce email check", author: "jchen" },
+          { sha: "a1b2c3d", message: "Fix validation race on async fields", author: "jchen", date: daysAgo(1) },
+          { sha: "e4f5a6b", message: "Address review: debounce email check", author: "jchen", date: daysAgo(0.6) },
         ],
         feedback: mockFeedback({
           verdict: "NEEDS CHANGES",
@@ -2585,6 +2677,8 @@
         url: "#", filesChanged: 3, additions: 57, deletions: 12,
         reviewedAt: daysAgo(1), prCreatedAt: daysAgo(9), reviewRequestedAt: daysAgo(7),
         reviewState: "COMMENTED", prStatus: "open", reviewStatus: "ok", logFile: "mock.log",
+        lastReviewSubmittedAt: daysAgo(1),
+        reviewedHeadSha: "d4d4d4d", currentHeadSha: "d4d4d4d", commitsSeenSha: null,
         feedback: mockFeedback({
           verdict: "NEEDS DISCUSSION",
           summary: "Straightforward storage migration. One open question on whether the explicit `iops` setting is intentional, since gp3's baseline already covers it at this volume size and the override adds cost.",
@@ -2606,7 +2700,25 @@
         url: "#", filesChanged: 2, additions: 88, deletions: 64,
         reviewedAt: daysAgo(2), prCreatedAt: daysAgo(3),
         reviewState: "PENDING", prStatus: "open", reviewStatus: "failed", logFile: "mock.log",
+        lastReviewSubmittedAt: null,
+        reviewedHeadSha: null, currentHeadSha: null, commitsSeenSha: null,
         feedback: "",
+      },
+      {
+        id: "mock-6", repo: "tcyph33/infra", pull_number: 31, author: "mrodriguez",
+        title: "Pin the Terraform provider versions",
+        url: "#", filesChanged: 1, additions: 8, deletions: 3,
+        reviewedAt: daysAgo(3), prCreatedAt: daysAgo(5), reviewRequestedAt: daysAgo(4),
+        reviewState: "APPROVED", prStatus: "open", reviewStatus: "ok", logFile: "mock.log",
+        lastReviewSubmittedAt: daysAgo(3),
+        reviewedHeadSha: "f6f6f6f", currentHeadSha: "f6f6f6f", commitsSeenSha: null,
+        feedback: mockFeedback({
+          verdict: "APPROVE",
+          summary: "Pins both providers to exact versions, which is what the drift incident last month called for.",
+          findings: [],
+          good: "- Exact pins rather than pessimistic constraints, matching the rest of the repo",
+          rationale: "Nothing to flag.",
+        }),
       },
       // mock-5 keeps the old pre-JSON feedback shape on purpose, so ?mock also
       // exercises the fallback notice when findings can't be parsed.
@@ -2616,6 +2728,8 @@
         url: "#", filesChanged: 9, additions: 130, deletions: 95,
         reviewedAt: daysAgo(4), prCreatedAt: daysAgo(12), reviewRequestedAt: daysAgo(11),
         reviewState: "APPROVED", prStatus: "merged", reviewStatus: "ok", logFile: "mock.log",
+        lastReviewSubmittedAt: daysAgo(4),
+        reviewedHeadSha: "e5e5e5e", currentHeadSha: "e5e5e5e", commitsSeenSha: null,
         feedback: "## Verdict\nApprove\n\n## Summary\nToken bump is clean and the contrast fixes bring all text past **WCAG AA**. No regressions found in the snapshot diff.",
       },
     ];

@@ -306,7 +306,7 @@ const server = http.createServer(async (req, res) => {
         const [owner, repoName] = review.repo.split("/");
         const refreshed = await refreshPRData(
           octokit!, owner, repoName, review.pull_number,
-          username, review.commitsSeenAt
+          username, review.commitsSeenAt, review.reviewedAt
         );
         review.reviewState         = refreshed.reviewState;
         review.lastReviewSubmittedAt = refreshed.lastReviewSubmittedAt;
@@ -315,6 +315,7 @@ const server = http.createServer(async (req, res) => {
         review.deletions           = refreshed.deletions;
         review.filesChanged        = refreshed.filesChanged;
         review.newCommits          = refreshed.newCommits;
+        review.currentHeadSha      = refreshed.headSha;
         // reviewedHeadSha is deliberately absent from this list. This endpoint
         // only re-reads GitHub metadata — the stored feedback still describes
         // the old commit — so advancing the SHA here would claim the findings
@@ -342,7 +343,10 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ error: "Review not found" }));
       return;
     }
+    // Record the head the user dismissed at, not just when: a rebase can carry
+    // commit dates older than the review, so only a SHA change should resurface.
     review.commitsSeenAt = new Date().toISOString();
+    review.commitsSeenSha = review.currentHeadSha ?? review.reviewedHeadSha ?? null;
     review.newCommits    = [];
     saveReviews(reviews);
     res.writeHead(200, { "Content-Type": "application/json" });
