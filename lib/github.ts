@@ -110,6 +110,134 @@ export async function getPRsNeedingReview(
   return Array.from(candidates.values());
 }
 
+export interface PRLocation {
+  owner: string;
+  repo: string;
+  pullNumber: number;
+}
+
+/**
+ * Extracts the repo coordinates from a search result's API url.
+ *
+ * @param item - A PR as returned by the search API
+ * @returns The coordinates, or null when the url is not in the expected shape
+ */
+export function parsePRLocation(item: SearchPRItem): PRLocation | null {
+  const apiUrl = item.pull_request?.url;
+  const match = apiUrl?.match(/repos\/([^/]+)\/([^/]+)\/pulls\/(\d+)/);
+  if (!match) return null;
+
+  const location: PRLocation = {
+    owner: match[1],
+    repo: match[2],
+    pullNumber: parseInt(match[3], 10),
+  };
+  return location;
+}
+
+interface CommitLike {
+  parents?: unknown[];
+  commit: { message: string };
+}
+
+/**
+ * Identifies a merge commit.
+ *
+ * Prefers the structural test — more than one parent — because a merge made with
+ * a custom message defeats any check on the message text, and merges from the
+ * base branch are exactly what should not count as work needing review.
+ *
+ * @param commit - A commit as returned by the commits endpoints
+ * @returns True when the commit is a merge
+ */
+export function isMergeCommit(commit: CommitLike): boolean {
+  const parentCount = commit.parents?.length ?? 0;
+  const hasMultipleParents = parentCount > 1;
+  if (hasMultipleParents) return true;
+
+  // Payloads that omit parents fall back to the message convention
+  const message = commit.commit.message.toLowerCase();
+  const looksLikeMerge = message.startsWith("merge ") || message.startsWith("merged ");
+  return looksLikeMerge;
+}
+
+export interface PriorReview {
+  reviewStatus: string;
+  reviewedHeadSha: string | null;
+  reviewedAt: string;
+}
+
+export interface ReviewDecision {
+  shouldReview: boolean;
+  /** Why, in words, for the orchestration log. */
+  reason: string;
+}
+
+/**
+ * Decides whether a PR needs another agent run.
+ *
+ * Deliberately fails open: when it cannot establish whether the PR has moved, it
+ * returns true. Reviewing unnecessarily costs one agent run, whereas skipping
+ * wrongly leaves a PR silently unreviewed, which is the worse failure.
+ *
+ * @param octokit - Authenticated GitHub client
+ * @param location - Repo coordinates of the PR
+ * @param prior - The stored review for this PR, or null if never reviewed
+ * @returns Whether to review, with the reason
+ */
+export async function decideWhetherToReview(
+  octokit: Octokit,
+  location: PRLocation,
+  prior: PriorReview | null
+): Promise<ReviewDecision> {
+  const COMMIT_PAGE_SIZE = 100;
+  const SHORT_SHA_LENGTH = 7;
+
+  const hasPrior = prior !== null;
+  if (!hasPrior) return { shouldReview: true, reason: "never reviewed" };
+
+  // A failed attempt is not a review, so the PR still needs one
+  const wasSuccessful = prior.reviewStatus === "success";
+  if (!wasSuccessful) return { shouldReview: true, reason: "previous attempt failed" };
+
+  const { owner, repo, pullNumber } = location;
+
+  try {
+    const { data: pullRequest } = await octokit.rest.pulls.get({
+      owner, repo, pull_number: pullNumber,
+    });
+
+    // A stored head SHA is the reliable comparison: it catches a force-push or
+    // rebase, where the resulting commits can carry dates older than the review.
+    const hasStoredSha = Boolean(prior.reviewedHeadSha);
+    if (hasStoredSha) {
+      const hasMoved = pullRequest.head.sha !== prior.reviewedHeadSha;
+      if (!hasMoved) return { shouldReview: false, reason: "head unchanged since last review" };
+      return { shouldReview: true, reason: `head moved to ${pullRequest.head.sha.slice(0, SHORT_SHA_LENGTH)}` };
+    }
+
+    // Records predating the stored SHA fall back to comparing commit dates
+    const { data: commits } = await octokit.rest.pulls.listCommits({
+      owner, repo, pull_number: pullNumber, per_page: COMMIT_PAGE_SIZE,
+    });
+    const commitsSinceReview = commits.filter((commit) => {
+      if (isMergeCommit(commit)) return false;
+      const authoredAt = commit.commit.committer?.date ?? commit.commit.author?.date ?? "";
+      return authoredAt > prior.reviewedAt;
+    });
+
+    const hasCommitsSinceReview = commitsSinceReview.length > 0;
+    if (!hasCommitsSinceReview) return { shouldReview: false, reason: "no new commits since last review" };
+    return { shouldReview: true, reason: `${commitsSinceReview.length} new commit(s) since last review` };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      shouldReview: true,
+      reason: `could not check for changes (${message}) — reviewing rather than risk skipping`,
+    };
+  }
+}
+
 export async function getPRDetails(
   octokit: Octokit,
   owner: string,
@@ -552,12 +680,11 @@ export async function refreshPRData(
         owner, repo, pull_number, per_page: 100,
       });
       newCommits = commits
-        .filter((c) => {
-          const msg = c.commit.message.toLowerCase();
-          // Exclude merge commits and common non-substantive commit types
-          if (msg.startsWith("merge ") || msg.startsWith("merged ")) return false;
-          const date = c.commit.committer?.date ?? c.commit.author?.date ?? "";
-          return date > since;
+        .filter((commit) => {
+          // A merge from the base branch is not work the author did on this PR
+          if (isMergeCommit(commit)) return false;
+          const authoredAt = commit.commit.committer?.date ?? commit.commit.author?.date ?? "";
+          return authoredAt > since;
         })
         .map((c) => ({
           sha:     c.sha.slice(0, 7),

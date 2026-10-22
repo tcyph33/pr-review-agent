@@ -15,6 +15,8 @@ import {
   getMyReviewState,
   getReviewRequestedAt,
   refreshPRStatuses,
+  parsePRLocation,
+  decideWhetherToReview,
 } from "./lib/github.ts";
 import type { SearchPRItem, RepoConfig, TriggerType } from "./lib/github.ts";
 import {
@@ -423,24 +425,58 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // ── Step 3: review each PR in parallel via Claude Code ────────────────────
-  tee(`\n📋  Reviewing ${candidates.length} PR(s) in parallel via Claude Code...\n`);
+  // ── Step 3: drop PRs that have not moved since their last successful review ──
+  tee(`\n🔎  Checking which of those actually need another run...`);
+  const priorById = new Map(loadReviews().map((review) => [review.id, review]));
+
+  const assessed = await Promise.all(candidates.map(async (candidate) => {
+    const location = parsePRLocation(candidate.item);
+
+    // An unparseable url cannot be checked, so let reviewPR record it as failed
+    const hasLocation = location !== null;
+    if (!hasLocation) {
+      return { candidate, decision: { shouldReview: true, reason: "could not parse the PR url" } };
+    }
+
+    const id = `${location.owner}/${location.repo}#${location.pullNumber}`;
+    const decision = await decideWhetherToReview(octokit, location, priorById.get(id) ?? null);
+    return { candidate, decision };
+  }));
+
+  for (const { candidate, decision } of assessed) {
+    orchLog(`    ${decision.shouldReview ? "review" : "skip  "} ${candidate.item.html_url} — ${decision.reason}`);
+  }
+
+  const toReview = assessed.filter((entry) => entry.decision.shouldReview);
+  const skippedCount = assessed.length - toReview.length;
+  if (skippedCount > 0) {
+    tee(`    Skipping ${skippedCount} PR(s) unchanged since their last review.`);
+  }
+
+  if (toReview.length === 0) {
+    tee("\n✅  Every PR is already reviewed at its current head — nothing to run.");
+    tee("Done! Open http://localhost:3000/dashboard/ to view the dashboard.");
+    process.exit(0);
+  }
+
+  // ── Step 4: review each remaining PR in parallel via Claude Code ──────────
+  tee(`\n📋  Reviewing ${toReview.length} PR(s) in parallel via Claude Code...\n`);
 
   const results = await Promise.all(
-    candidates.map((candidate) => reviewPR(candidate.item, skill, username, candidate.triggerType, orchLog))
+    toReview.map((entry) => reviewPR(entry.candidate.item, skill, username, entry.candidate.triggerType, orchLog))
   );
   const succeeded = results.filter(r => r.reviewStatus === "success").length;
   const failed    = results.filter(r => r.reviewStatus === "failed").length;
 
   tee(`\n✅  Completed: ${succeeded} succeeded, ${failed} failed.`);
 
-  // ── Step 4: merge and save ─────────────────────────────────────────────────
+  // ── Step 5: merge and save ─────────────────────────────────────────────────
   const currentReviews = loadReviews();
   const { merged, newCount, updatedCount } = mergeReviews(currentReviews, results);
   saveReviews(merged);
   tee(`💾  Results saved.`);
 
-  // ── Step 5: notify ─────────────────────────────────────────────────────────
+  // ── Step 6: notify ─────────────────────────────────────────────────────────
   const summary = buildNotificationSummary(newCount, updatedCount);
   if (summary) {
     notify("PR Review Agent", summary);
