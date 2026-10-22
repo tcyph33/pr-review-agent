@@ -837,10 +837,13 @@
       padding: 12px 20px;
       border-top: 1px solid var(--line-soft);
       display: flex;
-      justify-content: flex-end;
+      flex-direction: column;
+      align-items: stretch;
       gap: 8px;
       flex-shrink: 0;
     }
+
+    .commits-footer-actions { justify-content: flex-end; }
 
     /* Full review modal markdown */
     .review-md { font-size: 0.86rem; line-height: 1.7; color: var(--ink-body); }
@@ -1113,8 +1116,12 @@
     </div>
     <div class="commits-modal-body" id="commits-modal-body"></div>
     <div class="commits-modal-footer">
-      <button class="btn-ghost" onclick="closeCommitsModal()">Close</button>
-      <button class="btn-queue" id="commits-mark-seen-btn" onclick="markSeenFromModal()">No re-run needed</button>
+      <div id="commits-rerun-note"></div>
+      <div class="queue-actions commits-footer-actions">
+        <button class="btn-ghost" onclick="closeCommitsModal()">Close</button>
+        <button class="btn-ghost" id="commits-mark-seen-btn" onclick="markSeenFromModal()">No re-run needed</button>
+        <button class="btn-queue" onclick="rerunFromCommitsModal()">Re-run the agent</button>
+      </div>
     </div>
   </div>
 </div>
@@ -1395,6 +1402,7 @@
         <div class="card-footer">
           <div class="footer-actions">
             ${!failed ? `<button class="btn-claude" data-id="${escHtml(r.id)}" onclick="openInClaude(this)">Claude Code</button>` : ""}
+            <button class="btn-log" data-id="${escHtml(r.id)}" onclick="rerunReview(this)">Re-run agent</button>
             ${r.logFile ? `<button class="btn-log" data-id="${escHtml(r.id)}" data-title="${escHtml(r.title)}" onclick="viewLog(this)">View Log</button>` : ""}
           </div>
           ${!failed ? `<span class="read-more" data-review-idx="${i}" onclick="openReviewModalByIdx(this)">Read full review →</span>` : ""}
@@ -1579,6 +1587,7 @@
   let lastPartition   = null;   // inline/can't-place split, computed against the diff
   let queueResultHtml = "";     // footer status message, preserved across re-renders
   let wasRegenerated  = false;
+  let orphanedPendingUrl = null;   // a pending review left behind by a regeneration
   const findingsBeingEdited = new Set();
 
   function findingKey(finding) {
@@ -1588,7 +1597,7 @@
   }
 
   function loadReviewQueue(review, findings) {
-    const empty = { drafts: new Map(), sent: null, regenerated: false };
+    const empty = { drafts: new Map(), sent: null, regenerated: false, orphanedPendingUrl: null };
     try {
       const raw = localStorage.getItem(QUEUE_STORAGE_PREFIX + review.id);
       if (!raw) return empty;
@@ -1602,8 +1611,18 @@
       const currentSha = review.reviewedHeadSha ?? null;
       const isRegenerated = storedSha !== currentSha;
       if (isRegenerated) {
-        localStorage.removeItem(QUEUE_STORAGE_PREFIX + review.id);
-        return { drafts: new Map(), sent: null, regenerated: true };
+        // Any pending review still exists on GitHub, orphaned from the drafts
+        // that produced it, so its url is carried forward for the notice to link
+        const carriedUrl = stored.sent?.url ?? stored.orphanedPendingUrl ?? null;
+        const hasCarriedUrl = carriedUrl !== null;
+        if (hasCarriedUrl) {
+          localStorage.setItem(QUEUE_STORAGE_PREFIX + review.id, JSON.stringify({
+            reviewedHeadSha: currentSha, drafts: {}, sent: null, orphanedPendingUrl: carriedUrl,
+          }));
+        } else {
+          localStorage.removeItem(QUEUE_STORAGE_PREFIX + review.id);
+        }
+        return { drafts: new Map(), sent: null, regenerated: true, orphanedPendingUrl: carriedUrl };
       }
 
       // Drop drafts whose finding no longer exists in this review
@@ -1614,7 +1633,12 @@
         if (isLive) drafts.set(key, text);
       }
 
-      return { drafts, sent: stored.sent ?? null, regenerated: false };
+      return {
+        drafts,
+        sent: stored.sent ?? null,
+        regenerated: false,
+        orphanedPendingUrl: stored.orphanedPendingUrl ?? null,
+      };
     } catch {
       // Unreadable or unparseable storage simply means an empty queue
       return empty;
@@ -1623,7 +1647,7 @@
 
   function saveReviewQueue(review) {
     try {
-      const hasAnything = queuedCommentsByKey.size > 0 || sentState !== null;
+      const hasAnything = queuedCommentsByKey.size > 0 || sentState !== null || orphanedPendingUrl !== null;
       if (!hasAnything) {
         localStorage.removeItem(QUEUE_STORAGE_PREFIX + review.id);
         return;
@@ -1632,6 +1656,7 @@
         reviewedHeadSha: review.reviewedHeadSha ?? null,
         drafts: Object.fromEntries(queuedCommentsByKey),
         sent: sentState,
+        orphanedPendingUrl,
       }));
     } catch {
       // Persistence is a convenience; the queue still works for this session
@@ -1685,6 +1710,75 @@
     queueElement.innerHTML = renderFindingQueue(index);
     const isQueued = queuedCommentsByKey.has(findingKey(currentFindings[index]));
     findingElement.classList.toggle("queued", isQueued);
+  }
+
+  // Readable without opening the modal, so the card footer can warn before a
+  // re-run clears drafts the user may have forgotten about
+  function queuedDraftCount(reviewId) {
+    try {
+      const raw = localStorage.getItem(QUEUE_STORAGE_PREFIX + reviewId);
+      if (!raw) return 0;
+      return Object.keys(JSON.parse(raw).drafts ?? {}).length;
+    } catch {
+      return 0;
+    }
+  }
+
+  function draftWarningText(draftCount) {
+    return `${draftCount} comment${draftCount === 1 ? "" : "s"} queued for this review will be cleared once the new one lands.`
+      + ` Start the review on GitHub first if you want to keep ${draftCount === 1 ? "it" : "them"}.`;
+  }
+
+  async function postRerun(reviewId) {
+    const response = await fetch(`/api/reviews/${encodeURIComponent(reviewId)}/rerun`, { method: "POST" });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error ?? `HTTP ${response.status}`);
+    }
+  }
+
+  // Two stages when drafts exist: the first click warns, the second launches
+  async function rerunReview(button) {
+    const reviewId = button.getAttribute("data-id");
+    const draftCount = queuedDraftCount(reviewId);
+
+    const needsWarning = draftCount > 0 && button.dataset.warned !== "true";
+    if (needsWarning) {
+      button.dataset.warned = "true";
+      button.textContent = `${draftCount} queued — click to re-run anyway`;
+      button.title = draftWarningText(draftCount);
+      return;
+    }
+
+    const originalText = "Re-run agent";
+    button.textContent = "Opening...";
+    button.disabled = true;
+    try {
+      await postRerun(reviewId);
+      button.textContent = "✓ Launched";
+      setTimeout(() => {
+        button.textContent = originalText;
+        button.disabled = false;
+        delete button.dataset.warned;
+        button.removeAttribute("title");
+      }, 2500);
+    } catch (err) {
+      button.textContent = originalText;
+      button.disabled = false;
+      delete button.dataset.warned;
+      showError(`Could not start the re-run: ${err.message}`);
+    }
+  }
+
+  async function rerunFromCommitsModal() {
+    if (!currentCommitsId) return;
+    const noteElement = document.getElementById("commits-rerun-note");
+    try {
+      await postRerun(currentCommitsId);
+      noteElement.innerHTML = `<div class="queue-success">Re-run launched in Terminal. The dashboard will pick up the new review when it finishes.</div>`;
+    } catch (err) {
+      noteElement.innerHTML = `<div class="queue-error-box">Could not start the re-run: ${escHtml(err.message)}</div>`;
+    }
   }
 
   function clearQueueError(index) {
@@ -1743,6 +1837,7 @@
     findingsBeingEdited.clear();
     sentState = null;
     lastPartition = null;
+    orphanedPendingUrl = null;
     saveReviewQueue(currentReview);
     currentFindings.forEach((finding, index) => refreshFindingQueue(index));
 
@@ -1962,7 +2057,10 @@
     const hasSent = sentState !== null;
 
     if (wasRegenerated) {
-      sections.push(`<div class="queue-notice">This review was regenerated for new commits, so earlier drafts were cleared. A pending review from before may still exist on GitHub.</div>`);
+      const orphanNote = orphanedPendingUrl === null
+        ? ""
+        : ` <a href="${escHtml(orphanedPendingUrl)}" target="_blank" rel="noreferrer">A pending review from before is still on GitHub.</a>`;
+      sections.push(`<div class="queue-notice">This review was regenerated for new commits, so earlier drafts were cleared.${orphanNote}</div>`);
     }
 
     // Status line: what is queued, what is already on GitHub, and the drift between them
@@ -2377,8 +2475,9 @@
     // Restore drafts before rendering, so findings show as queued straight away
     const restored = loadReviewQueue(review, parsed ? parsed.findings : []);
     queuedCommentsByKey = restored.drafts;
-    sentState       = restored.sent;
-    wasRegenerated  = restored.regenerated;
+    sentState          = restored.sent;
+    wasRegenerated     = restored.regenerated;
+    orphanedPendingUrl = restored.orphanedPendingUrl;
     lastPartition   = null;
     queueResultHtml = "";
     findingsBeingEdited.clear();
@@ -2582,6 +2681,12 @@
         <span class="commit-author">${escHtml(c.author)}</span>
       </div>
     `).join('');
+    // Warn before a re-run discards drafts queued against the current findings
+    const draftCount = queuedDraftCount(id);
+    document.getElementById('commits-rerun-note').innerHTML = draftCount > 0
+      ? `<div class="queue-notice">${escHtml(draftWarningText(draftCount))}</div>`
+      : "";
+
     document.getElementById('commits-modal').classList.add('visible');
   }
 

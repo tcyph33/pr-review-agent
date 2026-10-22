@@ -15,6 +15,7 @@ import {
   getPendingReview,
   createPendingReview,
   deletePendingReview,
+  parsePRUrl,
 } from "./lib/github.ts";
 import type { PendingReviewCommentInput } from "./lib/github.ts";
 import { loadReviews, saveReviews, deleteReviewLog } from "./lib/storage.ts";
@@ -273,6 +274,42 @@ async function launchClaudeCode(review: PRReview): Promise<void> {
 
 }
 
+/**
+ * Opens a Terminal window re-running the review agent for a single PR.
+ *
+ * Runs the CLI rather than reviewing in-process: an agent run takes minutes, so
+ * a terminal is both a better progress display and interruptible, neither of
+ * which an HTTP request can offer.
+ *
+ * @param review - The review whose PR should be re-reviewed
+ * @throws {Error} If the host is not macOS, or the stored url is not a PR url
+ */
+function launchRerun(review: PRReview): void {
+  const isMacOS = os.platform() === "darwin";
+  if (!isMacOS) {
+    throw new Error("Re-running from the dashboard is currently only supported on macOS");
+  }
+
+  // Rebuild the url from parsed parts rather than interpolating the stored
+  // string, so the shell command can only ever contain url-safe characters
+  const location = parsePRUrl(review.url);
+  const isPRUrl = location !== null;
+  if (!isPRUrl) {
+    throw new Error(`The stored url is not a pull request url: ${review.url}`);
+  }
+  const prUrl = `https://github.com/${location.owner}/${location.repo}/pull/${location.pullNumber}`;
+
+  const command = `cd '${__dirname}' && npm run review -- '${prUrl}'`;
+  const script = [
+    `tell application "Terminal"`,
+    `  do script "${command.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`,
+    `  activate`,
+    `end tell`,
+  ].join("\n");
+
+  execSync(`osascript << 'APPLESCRIPT'\n${script}\nAPPLESCRIPT`);
+}
+
 // ── Request handler ───────────────────────────────────────────────────────────
 
 const server = http.createServer(async (req, res) => {
@@ -371,6 +408,32 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ ok: true }));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: message }));
+    }
+    return;
+  }
+
+  // ── POST /api/reviews/:id/rerun ───────────────────────────────────────────
+  if (req.method === "POST" && url.pathname.endsWith("/rerun")) {
+    const reviewId: string = decodeURIComponent(
+      url.pathname.replace("/api/reviews/", "").replace("/rerun", "")
+    );
+    const review: PRReview | null = findReview(reviewId);
+
+    const isReviewMissing: boolean = (review === null);
+    if (isReviewMissing) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Review not found" }));
+      return;
+    }
+
+    try {
+      launchRerun(review!);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      const message: string = err instanceof Error ? err.message : String(err);
       res.writeHead(500, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: message }));
     }

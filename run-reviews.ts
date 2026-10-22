@@ -16,9 +16,11 @@ import {
   getReviewRequestedAt,
   refreshPRStatuses,
   parsePRLocation,
+  parsePRUrl,
   decideWhetherToReview,
+  resolveTriggerType,
 } from "./lib/github.ts";
-import type { SearchPRItem, RepoConfig, TriggerType } from "./lib/github.ts";
+import type { SearchPRItem, RepoConfig, TriggerType, PRLocation } from "./lib/github.ts";
 import {
   loadReviews,
   saveReviews,
@@ -249,45 +251,65 @@ async function runWithClaudeCode(
 
 // ── Per-PR review ─────────────────────────────────────────────────────────────
 
+/**
+ * Builds a failed record for a PR whose API url could not be parsed, so it still
+ * appears on the dashboard instead of vanishing from the run without trace.
+ *
+ * @param item - The PR as the search API returned it
+ * @param orchLog - Appends a line to the orchestration log
+ * @returns A record marked failed, with the reason written to its own log file
+ */
+function buildUnreviewableRecord(item: SearchPRItem, orchLog: (msg: string) => void): PRReview {
+  const id      = `unknown#${item.number}`;
+  const slug    = id.replace(/\//g, "-").replace("#", "-");
+  const logFile = `logs/reviews/${slug}.log`;
+  const message = `Could not parse the PR API url: ${item.pull_request?.url ?? "undefined"}`;
+
+  fs.mkdirSync(PR_LOGS_PATH, { recursive: true });
+  fs.writeFileSync(path.join(PR_LOGS_PATH, `${slug}.log`), message + "\n", "utf8");
+  orchLog(`  ⚠️  ${message}`);
+
+  return {
+    id, title: item.title ?? "Unknown PR", url: item.html_url,
+    repo: "unknown", pull_number: item.number, author: "unknown", branch: "",
+    filesChanged: 0, additions: 0, deletions: 0, feedback: "",
+    reviewState: "PENDING", reviewStatus: "failed", prStatus: "open",
+    prCreatedAt: new Date().toISOString(), reviewRequestedAt: null, triggerType: "commenter",
+    lastReviewSubmittedAt: null, newCommits: [], commitsSeenAt: null,
+    reviewedHeadSha: null, currentHeadSha: null, commitsSeenSha: null,
+    reviewedAt: new Date().toISOString(), logFile,
+  };
+}
+
+/**
+ * Reviews one pull request with the agent and builds its stored record.
+ *
+ * @param location - Repo coordinates of the PR
+ * @param title - PR title, for logs and the dashboard card
+ * @param htmlUrl - The PR's web url, handed to the agent and stored
+ * @param skill - The review skill, used as the agent's system prompt
+ * @param username - Login whose review state and responsibility date to read
+ * @param triggerType - Why this PR is the user's responsibility
+ * @param orchLog - Appends a line to the orchestration log
+ * @returns The review record, with reviewStatus "failed" if anything went wrong
+ */
 async function reviewPR(
-  pr: SearchPRItem,
+  location: PRLocation,
+  title: string,
+  htmlUrl: string,
   skill: string,
   username: string,
   triggerType: TriggerType,
   orchLog: (msg: string) => void
 ): Promise<PRReview> {
-  const prUrl = pr.pull_request?.url;
-  const match = prUrl?.match(/repos\/([^/]+)\/([^/]+)\/pulls\/(\d+)/);
-
-  if (!prUrl || !match) {
-    const id      = `unknown#${pr.number}`;
-    const logFile = `logs/reviews/${id.replace(/\//g, "-").replace("#", "-")}.log`;
-    const msg     = `Could not parse PR URL: ${prUrl ?? "undefined"}`;
-    fs.mkdirSync(PR_LOGS_PATH, { recursive: true });
-    fs.writeFileSync(path.join(PR_LOGS_PATH, `${id.replace(/\//g, "-").replace("#", "-")}.log`), msg + "\n", "utf8");
-    orchLog(`  ⚠️  Could not parse PR info: ${pr.html_url}`);
-    return {
-      id, title: pr.title ?? "Unknown PR", url: pr.html_url,
-      repo: "unknown", pull_number: pr.number, author: "unknown", branch: "",
-      filesChanged: 0, additions: 0, deletions: 0, feedback: "",
-      reviewState: "PENDING", reviewStatus: "failed", prStatus: "open",
-      prCreatedAt: new Date().toISOString(), reviewRequestedAt: null, triggerType: 'review-requested' as TriggerType,
-      lastReviewSubmittedAt: null, newCommits: [], commitsSeenAt: null,
-      reviewedHeadSha: null, currentHeadSha: null, commitsSeenSha: null,
-      reviewedAt: new Date().toISOString(), logFile,
-    };
-  }
-
-  const owner       = match[1];
-  const repo        = match[2];
-  const pullNumber  = parseInt(match[3], 10);
+  const { owner, repo, pullNumber } = location;
   const id          = `${owner}/${repo}#${pullNumber}`;
   const logFilename = `${owner}-${repo}-${pullNumber}.log`;
   const logPath     = path.join(PR_LOGS_PATH, logFilename);
   const logFile     = `logs/reviews/${logFilename}`; // relative path stored in reviews.json
 
-  orchLog(`  🤖  Reviewing PR #${pullNumber} in ${owner}/${repo}: "${pr.title}"`);
-  console.log(`  🤖  Reviewing PR #${pullNumber} in ${owner}/${repo}: "${pr.title}"`);
+  orchLog(`  🤖  Reviewing PR #${pullNumber} in ${owner}/${repo}: "${title}"`);
+  console.log(`  🤖  Reviewing PR #${pullNumber} in ${owner}/${repo}: "${title}"`);
 
   try {
     const [files, details, reviewState, reviewRequestedAt] = await Promise.all([
@@ -297,11 +319,11 @@ async function reviewPR(
       getReviewRequestedAt(octokit, owner, repo, pullNumber, username, triggerType),
     ]);
 
-    const feedback = await runWithClaudeCode(skill, pr.html_url, logPath, orchLog);
+    const feedback = await runWithClaudeCode(skill, htmlUrl, logPath, orchLog);
     console.log(`  ✅  PR #${pullNumber} review complete.`);
 
     return {
-      id, title: pr.title ?? "", url: pr.html_url,
+      id, title, url: htmlUrl,
       repo: `${owner}/${repo}`, pull_number: pullNumber,
       author: details.user?.login ?? "unknown",
       branch: `${details.head.ref} → ${details.base.ref}`,
@@ -336,7 +358,7 @@ async function reviewPR(
     } catch { /* best effort */ }
 
     return {
-      id, title: pr.title ?? "", url: pr.html_url,
+      id, title, url: htmlUrl,
       repo: `${owner}/${repo}`, pull_number: pullNumber,
       author, branch, filesChanged, additions, deletions,
       feedback: "", reviewState: "PENDING", reviewStatus: "failed", prStatus: "open",
@@ -345,6 +367,70 @@ async function reviewPR(
       prCreatedAt, reviewRequestedAt: null, triggerType, reviewedAt: new Date().toISOString(), logFile,
     };
   }
+}
+
+// ── Single-PR mode ────────────────────────────────────────────────────────────
+
+/**
+ * Reviews one pull request named on the command line.
+ *
+ * Bypasses both the tier search and the unchanged-head skip. The skip bypass is
+ * deliberate: naming a PR by url is an explicit request for fresh findings,
+ * which may be wanted because the review skill changed rather than because the
+ * PR itself moved.
+ *
+ * @param prUrl - A github.com pull request url
+ * @param skill - The review skill, used as the agent's system prompt
+ * @param username - Authenticated login
+ * @param orchLogPath - Path to this run's orchestration log, for failure notices
+ * @param orchLog - Appends a line to the orchestration log
+ * @param tee - Writes to both the console and the orchestration log
+ */
+async function reviewSinglePR(
+  prUrl: string,
+  skill: string,
+  username: string,
+  orchLogPath: string,
+  orchLog: (msg: string) => void,
+  tee: (msg: string) => void
+): Promise<void> {
+  // Validate the argument before spending anything on it
+  const location = parsePRUrl(prUrl);
+  const isPRUrl = location !== null;
+  if (!isPRUrl) {
+    tee(`❌  Not a GitHub pull request url: ${prUrl}`);
+    tee(`    Expected: https://github.com/<owner>/<repo>/pull/<number>`);
+    process.exit(1);
+  }
+
+  const id = `${location.owner}/${location.repo}#${location.pullNumber}`;
+  const prior = loadReviews().find((review) => review.id === id) ?? null;
+
+  // Classification can only strengthen, so an already-reviewed PR does not get
+  // demoted just because GitHub cleared its review request
+  const triggerType = await resolveTriggerType(octokit, location, username, prior?.triggerType ?? null);
+
+  tee(`\n📋  Reviewing ${id} only — skipping the tier search and the unchanged-head check.`);
+  tee(`    Tier: ${triggerType}${prior === null ? " (new to the dashboard)" : ""}\n`);
+
+  const details = await getPRDetails(octokit, location.owner, location.repo, location.pullNumber);
+  const result = await reviewPR(location, details.title, details.html_url, skill, username, triggerType, orchLog);
+
+  const { merged } = mergeReviews(loadReviews(), [result]);
+  saveReviews(merged);
+  tee(`💾  Result saved.`);
+
+  const didSucceed = result.reviewStatus === "success";
+  if (didSucceed) {
+    notify("PR Review Agent", `Re-reviewed ${id}`);
+    tee(`\n=== Run complete: ${new Date().toISOString()}`);
+    console.log("\nDone! Open http://localhost:3000/dashboard/ to view the dashboard.");
+    return;
+  }
+
+  notifyFailure(1, orchLogPath);
+  tee(`\n❌  Review failed for ${id} — see ${result.logFile}`);
+  process.exit(1);
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -389,6 +475,14 @@ async function main(): Promise<void> {
 
   const username = await getAuthenticatedUsername(octokit);
   tee(`👤  Authenticated as ${username}`);
+
+  // A PR url as the first argument narrows the whole run to that one PR
+  const requestedPRUrl = process.argv[2] ?? null;
+  const isSinglePRRun = requestedPRUrl !== null;
+  if (isSinglePRRun) {
+    await reviewSinglePR(requestedPRUrl, skill, username, orchLogPath, orchLog, tee);
+    return;
+  }
 
   const repoConfig = {
     reviewRequestedRepos: REVIEW_REQUESTED_REPOS.split(",").map(r => r.trim()).filter(Boolean),
@@ -435,12 +529,12 @@ async function main(): Promise<void> {
     // An unparseable url cannot be checked, so let reviewPR record it as failed
     const hasLocation = location !== null;
     if (!hasLocation) {
-      return { candidate, decision: { shouldReview: true, reason: "could not parse the PR url" } };
+      return { candidate, location: null, decision: { shouldReview: true, reason: "could not parse the PR url" } };
     }
 
     const id = `${location.owner}/${location.repo}#${location.pullNumber}`;
     const decision = await decideWhetherToReview(octokit, location, priorById.get(id) ?? null);
-    return { candidate, decision };
+    return { candidate, location, decision };
   }));
 
   for (const { candidate, decision } of assessed) {
@@ -462,9 +556,21 @@ async function main(): Promise<void> {
   // ── Step 4: review each remaining PR in parallel via Claude Code ──────────
   tee(`\n📋  Reviewing ${toReview.length} PR(s) in parallel via Claude Code...\n`);
 
-  const results = await Promise.all(
-    toReview.map((entry) => reviewPR(entry.candidate.item, skill, username, entry.candidate.triggerType, orchLog))
-  );
+  // A PR whose url would not parse cannot be reviewed, but still gets a record
+  const reviewable  = toReview.filter((entry) => entry.location !== null);
+  const unreviewable = toReview.filter((entry) => entry.location === null);
+
+  const reviewed = await Promise.all(reviewable.map((entry) => reviewPR(
+    entry.location!,
+    entry.candidate.item.title ?? "",
+    entry.candidate.item.html_url,
+    skill, username, entry.candidate.triggerType, orchLog
+  )));
+
+  const results = [
+    ...reviewed,
+    ...unreviewable.map((entry) => buildUnreviewableRecord(entry.candidate.item, orchLog)),
+  ];
   const succeeded = results.filter(r => r.reviewStatus === "success").length;
   const failed    = results.filter(r => r.reviewStatus === "failed").length;
 

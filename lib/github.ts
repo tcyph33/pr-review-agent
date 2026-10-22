@@ -135,6 +135,86 @@ export function parsePRLocation(item: SearchPRItem): PRLocation | null {
   return location;
 }
 
+/**
+ * Parses a GitHub pull request web url into repo coordinates.
+ *
+ * @param url - A url of the form https://github.com/<owner>/<repo>/pull/<number>
+ * @returns The coordinates, or null when the url is not a PR url
+ */
+export function parsePRUrl(url: string): PRLocation | null {
+  const match = url.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
+  if (!match) return null;
+
+  const location: PRLocation = {
+    owner: match[1],
+    repo: match[2],
+    pullNumber: parseInt(match[3], 10),
+  };
+  return location;
+}
+
+// Lower is stronger. Used only to compare tiers, never persisted.
+const TRIGGER_STRENGTH: Record<TriggerType, number> = {
+  assignee: 0,
+  "review-requested": 1,
+  commenter: 2,
+};
+
+async function detectTriggerType(
+  octokit: Octokit,
+  location: PRLocation,
+  username: string
+): Promise<TriggerType> {
+  const { owner, repo, pullNumber } = location;
+
+  try {
+    const [pullRequest, requestedReviewers] = await Promise.all([
+      octokit.rest.pulls.get({ owner, repo, pull_number: pullNumber }),
+      octokit.rest.pulls.listRequestedReviewers({ owner, repo, pull_number: pullNumber }),
+    ]);
+
+    const isAssignee = (pullRequest.data.assignees ?? []).some((user) => user?.login === username);
+    if (isAssignee) return "assignee";
+
+    const isReviewRequested = requestedReviewers.data.users.some((user) => user.login === username);
+    if (isReviewRequested) return "review-requested";
+  } catch {
+    // Classification is not worth failing a run over; fall through to the weakest tier
+  }
+
+  return "commenter";
+}
+
+/**
+ * Works out why a PR is the user's responsibility, for a run that did not come
+ * through the tier searches.
+ *
+ * Only ever strengthens a stored tier, never weakens it. GitHub clears a review
+ * request the moment the user submits a review, so detection on its own would
+ * demote an already-reviewed PR to "commenter" and drag its responsibility date
+ * along with it — which is precisely the PR someone would ask to re-review.
+ *
+ * @param octokit - Authenticated GitHub client
+ * @param location - Repo coordinates of the PR
+ * @param username - Login whose relationship to the PR is being classified
+ * @param storedTriggerType - Tier from an existing review record, or null if new
+ * @returns Whichever of the stored and detected tiers is stronger
+ */
+export async function resolveTriggerType(
+  octokit: Octokit,
+  location: PRLocation,
+  username: string,
+  storedTriggerType: TriggerType | null
+): Promise<TriggerType> {
+  const detected = await detectTriggerType(octokit, location, username);
+
+  const hasStored = storedTriggerType !== null;
+  if (!hasStored) return detected;
+
+  const isDetectedStronger = TRIGGER_STRENGTH[detected] < TRIGGER_STRENGTH[storedTriggerType];
+  return isDetectedStronger ? detected : storedTriggerType;
+}
+
 interface CommitLike {
   parents?: unknown[];
   commit: { message: string };
