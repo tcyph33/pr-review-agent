@@ -522,6 +522,8 @@
       min-width: 0;
       border-left: 1px solid var(--line-soft);
       background: var(--panel-2);
+      /* Long lines scroll inside each file's diff, not by dragging the pane */
+      overflow-x: hidden;
     }
 
     .modal-split.diff-hidden .modal-pane-diff { display: none; }
@@ -568,12 +570,32 @@
     .diff-name   { font-family: var(--mono); font-size: 0.73rem; color: var(--ink); flex: 1; min-width: 0; overflow-wrap: anywhere; }
     .diff-counts { font-family: var(--mono); font-size: 0.68rem; flex-shrink: 0; white-space: nowrap; }
 
-    .diff-body { display: none; border-top: 1px solid var(--line); overflow-x: auto; }
+    .diff-body { display: none; border-top: 1px solid var(--line); overflow-x: auto; overflow-y: hidden; }
     .diff-file.open .diff-body { display: block; }
 
-    .diff-table { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 0.7rem; line-height: 1.55; }
+    /* max-content so a long line actually overflows and produces a scrollbar;
+       min-width so a short diff still fills the panel rather than shrinking. */
+    .diff-table {
+      border-collapse: collapse;
+      width: max-content;
+      min-width: 100%;
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      line-height: 1.55;
+    }
+
+    /* macOS hides overlay scrollbars until something scrolls, which leaves no
+       hint that a diff line continues past the edge. Keep this one visible. */
+    .diff-body::-webkit-scrollbar { height: 11px; }
+    .diff-body::-webkit-scrollbar-track { background: var(--panel-2); }
+    .diff-body::-webkit-scrollbar-thumb {
+      background: var(--line);
+      border-radius: 6px;
+      border: 2px solid var(--panel-2);
+    }
+    .diff-body::-webkit-scrollbar-thumb:hover { background: var(--ink-faint); }
+
     .diff-ln {
-      width: 1%;
       white-space: nowrap;
       text-align: right;
       padding: 0 7px;
@@ -594,31 +616,11 @@
        the add/delete tints rather than replacing them. */
     .diff-row-target .diff-code { box-shadow: inset 3px 0 0 var(--accent); font-weight: 600; }
 
-    /* ── Per-finding diff context ── */
+    /* ── Jump from a finding into the diff ── */
     .finding-loc-link { cursor: pointer; }
     .finding-loc-link:hover { color: var(--accent-deep); text-decoration: underline; }
     .finding-jump { font-size: 0.74em; color: var(--ink-faint); margin-left: 3px; }
     .finding-loc-link:hover .finding-jump { color: var(--accent-deep); }
-
-    .finding-context { margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--line); }
-
-    .finding-context-toggle {
-      background: transparent;
-      border: none;
-      padding: 0;
-      font-size: 0.6rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.13em;
-      color: var(--ink-faint);
-      cursor: pointer;
-      font-family: inherit;
-    }
-
-    .finding-context-toggle:hover { color: var(--accent-deep); }
-
-    .finding-context-body { margin-top: 9px; border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; background: var(--panel); }
-    .finding-context-note { padding: 9px 11px; font-size: 0.74rem; color: var(--ink-mute); font-style: italic; }
 
     /* ── Per-finding comment queue ── */
     .finding-queue { margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--line); }
@@ -1526,13 +1528,6 @@
          </div>`
       : "";
 
-    const contextHtml = hasLine
-      ? `<div class="finding-context">
-           <button class="finding-context-toggle" id="finding-context-btn-${index}" onclick="toggleFindingContext(${index})">▸ Show diff context</button>
-           <div class="finding-context-body" id="finding-context-${index}" style="display:none"></div>
-         </div>`
-      : "";
-
     const isQueued = queuedCommentsByKey.has(findingKey(finding));
 
     return `
@@ -1545,7 +1540,6 @@
         ${finding.title  ? `<div class="finding-title">${escHtml(finding.title)}</div>` : ""}
         ${finding.detail ? `<div class="finding-detail">${renderInlineMarkdown(finding.detail)}</div>` : ""}
         ${referencesHtml}
-        ${contextHtml}
         <div class="finding-queue" id="finding-queue-${index}">${renderFindingQueue(index)}</div>
       </div>`;
   }
@@ -1867,7 +1861,7 @@
       if (!hasLine)      reason = "the finding is file-level, with no line to anchor to";
       else if (!file)    reason = `${finding.file} is not part of this PR's diff`;
       else if (!file.patch) reason = `GitHub provides no patch for ${finding.file}`;
-      else if (findFindingContextRows(file, finding.line) === null) {
+      else if (!isLineInDiff(file, finding.line)) {
         reason = `line ${finding.line} falls outside the changed hunks`;
       }
 
@@ -2137,17 +2131,13 @@
     added: "A", removed: "D", modified: "M",
     renamed: "R", copied: "C", changed: "M", unchanged: "=",
   };
-  const DIFF_PANE_HIDDEN_KEY = "diffPaneHidden";
-
   const diffCacheByReviewId = new Map();
   let currentDiffFiles = [];
   let currentReview = null;
 
-  // Tracked in memory with localStorage as a mirror, so the toggle still works
-  // when storage is unavailable (private window, blocked site data).
-  let diffPaneHidden = (() => {
-    try { return localStorage.getItem(DIFF_PANE_HIDDEN_KEY) === "true"; } catch { return false; }
-  })();
+  // Reset to hidden every time a review opens. The review text is what you came
+  // for; showing the diff is a deliberate second step, not a remembered mode.
+  let diffPaneHidden = true;
 
   // Parses a unified diff into rows carrying both old and new line numbers.
   // The line numbers are what lets a finding be located inside a hunk, rather
@@ -2315,7 +2305,6 @@
 
   function setDiffPaneHidden(hidden) {
     diffPaneHidden = hidden;
-    try { localStorage.setItem(DIFF_PANE_HIDDEN_KEY, String(hidden)); } catch { /* convenience only */ }
     applyDiffPaneVisibility();
   }
 
@@ -2323,90 +2312,10 @@
     setDiffPaneHidden(!diffPaneHidden);
   }
 
-  // ── Per-finding diff context ──
-  const FINDING_CONTEXT_RADIUS = 4;
-
-  // Locates the diff rows surrounding a finding's line, clamped to the hunk that
-  // contains it so the window never bleeds into an unrelated hunk. Returns null
-  // when the line is not part of any hunk.
-  function findFindingContextRows(file, line) {
-    const rows = parsePatch(file.patch);
-    const targetIndex = rows.findIndex((row) => row.newLine === line);
-
-    const isLineInDiff = targetIndex >= 0;
-    if (!isLineInDiff) return null;
-
-    // Walk back to the governing hunk header and forward to the next one
-    let hunkHeaderIndex = -1;
-    for (let i = targetIndex; i >= 0; i -= 1) {
-      if (rows[i].type === "hunk") { hunkHeaderIndex = i; break; }
-    }
-    let nextHunkIndex = rows.length;
-    for (let i = targetIndex + 1; i < rows.length; i += 1) {
-      if (rows[i].type === "hunk") { nextHunkIndex = i; break; }
-    }
-
-    const windowStart = Math.max(hunkHeaderIndex + 1, targetIndex - FINDING_CONTEXT_RADIUS);
-    const windowEnd   = Math.min(nextHunkIndex, targetIndex + FINDING_CONTEXT_RADIUS + 1);
-    const windowRows  = rows.slice(windowStart, windowEnd);
-
-    // Keep the hunk header for orientation when the window starts below it
-    const needsHeader = hunkHeaderIndex >= 0 && windowStart > hunkHeaderIndex;
-    const contextRows = needsHeader ? [rows[hunkHeaderIndex], ...windowRows] : windowRows;
-    return contextRows;
-  }
-
-  function findingContextNote(message) {
-    return `<div class="finding-context-note">${escHtml(message)}</div>`;
-  }
-
-  function renderFindingContext(diff, finding) {
-    const file = diff.files.find((candidate) => candidate.filename === finding.file);
-
-    // The anchor file can be missing from the diff, or present without a patch
-    if (!file) {
-      const reason = diff.truncated
-        ? `${finding.file} is not among the first ${diff.files.length} files of this PR.`
-        : `${finding.file} is not part of this PR's diff, so there is no hunk to show.`;
-      return findingContextNote(reason);
-    }
-    if (!file.patch) {
-      return findingContextNote(`GitHub provides no patch for ${finding.file} — it is binary or too large.`);
-    }
-
-    const contextRows = findFindingContextRows(file, finding.line);
-    if (contextRows === null) {
-      return findingContextNote(`Line ${finding.line} falls outside the changed hunks of ${finding.file}.`);
-    }
-
-    return renderDiffRows(contextRows, finding.line);
-  }
-
-  async function toggleFindingContext(index) {
-    const finding       = currentFindings[index];
-    const bodyElement   = document.getElementById(`finding-context-${index}`);
-    const buttonElement = document.getElementById(`finding-context-btn-${index}`);
-    if (!finding || !bodyElement) return;
-
-    // Collapsing drops the rendered rows; the diff itself stays cached
-    const isOpen = bodyElement.style.display !== "none";
-    if (isOpen) {
-      bodyElement.style.display = "none";
-      bodyElement.innerHTML = "";
-      buttonElement.textContent = "▸ Show diff context";
-      return;
-    }
-
-    bodyElement.style.display = "";
-    buttonElement.textContent = "▾ Hide diff context";
-    bodyElement.innerHTML = findingContextNote("Loading diff…");
-
-    try {
-      const diff = await fetchDiff(currentReview);
-      bodyElement.innerHTML = renderFindingContext(diff, finding);
-    } catch (err) {
-      bodyElement.innerHTML = findingContextNote(`Could not load the diff: ${err.message}`);
-    }
+  // Whether a finding's line exists on the right side of the diff, which is what
+  // decides if GitHub can anchor an inline comment to it.
+  function isLineInDiff(file, line) {
+    return parsePatch(file.patch).some((row) => row.newLine === line);
   }
 
   function highlightDiffRow(fileIndex, line) {
@@ -2436,24 +2345,27 @@
     let diff;
     try {
       diff = await fetchDiff(currentReview);
-    } catch {
-      toggleFindingContext(index);
+    } catch (err) {
+      showError(`Could not load the diff: ${err.message}`);
       return;
     }
 
-    // With no matching file there is nothing to jump to, so fall back to the
-    // inline context, which explains why the anchor cannot be shown
+    // Say why nothing happened rather than appearing to be a dead button
     const fileIndex = diff.files.findIndex((candidate) => candidate.filename === finding.file);
     const isFileInDiff = fileIndex >= 0;
     if (!isFileInDiff) {
-      const bodyElement = document.getElementById(`finding-context-${index}`);
-      const isAlreadyOpen = bodyElement && bodyElement.style.display !== "none";
-      if (!isAlreadyOpen) toggleFindingContext(index);
+      showError(`${finding.file} is not part of this PR's diff, so there is nothing to show.`);
       return;
     }
 
     const fileElement = document.getElementById(`diff-file-${fileIndex}`);
     if (!fileElement) return;
+
+    // Collapse every other file so the jump lands on one focused diff. Their
+    // rendered rows stay in the DOM, so reopening one by hand is still instant.
+    document.querySelectorAll(".modal-pane-diff .diff-file.open").forEach((openFile) => {
+      if (openFile !== fileElement) openFile.classList.remove("open");
+    });
 
     if (!fileElement.classList.contains("open")) toggleDiffFile(fileIndex);
     highlightDiffRow(fileIndex, finding.line);
@@ -2497,7 +2409,7 @@
 
     // Reset both panes to the top — the modal element is reused across reviews
     content.parentElement.scrollTop = 0;
-    applyDiffPaneVisibility();
+    setDiffPaneHidden(true);
     renderQueueFooter();
 
     document.getElementById('review-modal').classList.add('visible');
@@ -2654,12 +2566,22 @@
 
   async function markSeenFromModal() {
     if (!currentCommitsId) return;
+    const noteElement = document.getElementById("commits-rerun-note");
+
     try {
-      await fetch(`/api/reviews/${encodeURIComponent(currentCommitsId)}/mark-seen`, { method: "POST" });
+      const response = await fetch(`/api/reviews/${encodeURIComponent(currentCommitsId)}/mark-seen`, { method: "POST" });
+
+      // fetch resolves on 4xx and 5xx, so without this the modal would close and
+      // the dashboard would reload as though the dismissal had been recorded
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error ?? `HTTP ${response.status}`);
+      }
+
       closeCommitsModal();
       await loadReviews();
     } catch (err) {
-      showError(`Could not mark as seen: ${err.message}`);
+      noteElement.innerHTML = `<div class="queue-error-box">Could not dismiss these commits: ${escHtml(err.message)}</div>`;
     }
   }
 
