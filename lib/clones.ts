@@ -22,12 +22,15 @@ interface ClonedReview {
  * @returns The absolute path, or null when the record carries no usable repo name
  */
 export function cloneDirectoryFor(review: ClonedReview, root: string = PR_REVIEWS_ROOT): string | null {
-  const repoName = review.repo.split("/")[1] ?? "";
+  // The owner is part of the name because two orgs can own a repo of the same
+  // name. Without it, acme/web#5 and other/web#5 share a directory, so deleting
+  // one review's clone would remove the checkout the other is still using.
+  const [owner, repoName] = review.repo.split("/");
 
-  const hasRepoName = repoName.length > 0;
-  if (!hasRepoName) return null;
+  const hasBothParts = Boolean(owner) && Boolean(repoName);
+  if (!hasBothParts) return null;
 
-  const directory = path.join(root, `${repoName}-${review.pull_number}`);
+  const directory = path.join(root, `${owner}-${repoName}-${review.pull_number}`);
   return directory;
 }
 

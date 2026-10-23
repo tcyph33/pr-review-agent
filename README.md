@@ -154,7 +154,7 @@ The dashboard server (`server.ts`) starts automatically at login via launchd and
 
 The agent uses the `code-review` skill from your `claude-toolkit` repo. The skill:
 
-- Clones the PR branch shallowly to `~/PR-Reviews/<repo>-<number>` using `gh`
+- Clones the PR branch shallowly to `~/PR-Reviews/<org>-<repo>-<number>` using `gh`
 - Reads full file contents — not just the diff — to catch issues in untouched dependent files
 - Greps the entire repo for dangling references to removed or renamed concepts
 - Runs a structured 9-category checklist (correctness, design, readability, completeness, semantic validity, testing, security, performance, documentation)
