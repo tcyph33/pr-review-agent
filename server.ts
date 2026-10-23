@@ -19,6 +19,7 @@ import {
 } from "./lib/github.ts";
 import type { PendingReviewCommentInput } from "./lib/github.ts";
 import { loadReviews, saveReviews, deleteReviewLog } from "./lib/storage.ts";
+import { cloneDirectoryFor, deleteCloneDirectory, PR_REVIEWS_ROOT } from "./lib/clones.ts";
 import type { PRReview } from "./lib/storage.ts";
 
 const __dirname      = path.dirname(fileURLToPath(import.meta.url));
@@ -219,8 +220,7 @@ async function fetchSkill(): Promise<string> {
  * @returns The message text, naming the existing clone so Claude does not re-clone it
  */
 function buildClaudeMessage(review: PRReview): string {
-  const repoName = review.repo.split("/")[1];
-  const cloneDir = `~/PR-Reviews/${repoName}-${review.pull_number}`;
+  const cloneDir = cloneDirectoryFor(review) ?? PR_REVIEWS_ROOT;
   return [
     `The automated review agent has already reviewed this PR: ${review.url}`,
     ``,
@@ -255,10 +255,9 @@ async function launchClaudeCode(review: PRReview): Promise<void> {
   fs.writeFileSync(skillPath, skill, "utf8");
   fs.writeFileSync(messagePath, message, "utf8");
 
-  // Open in the cloned repo dir — falls back to ~/PR-Reviews if clone doesn't exist
-  const repoName = review.repo.split("/")[1];
-  const cloneDir = `~/PR-Reviews/${repoName}-${review.pull_number}`;
-  const cdCmd    = `[ -d ${cloneDir} ] && cd ${cloneDir} || cd ~/PR-Reviews`;
+  // Open in the cloned repo dir — falls back to the clone root if it is absent
+  const cloneDir = cloneDirectoryFor(review) ?? PR_REVIEWS_ROOT;
+  const cdCmd    = `[ -d '${cloneDir}' ] && cd '${cloneDir}' || cd '${PR_REVIEWS_ROOT}'`;
   // Read and delete message file inline — avoids race condition where server deletes it before Terminal reads it
   const claudeCmd = `claude --system-prompt "$(cat '${skillPath}')" "$(cat '${messagePath}' && rm '${messagePath}')"`;
   const fullCmd  = `${cdCmd} && ${claudeCmd}`;
@@ -602,20 +601,33 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (target) deleteReviewLog(target);
+    // The clone goes with the review — it is an artefact of the review process
+    // the user never asked for, so leaving it behind just accumulates on disk
+    let clonesRemoved = 0;
+    if (target) {
+      deleteReviewLog(target);
+      if (deleteCloneDirectory(target)) clonesRemoved += 1;
+    }
+
     saveReviews(filtered);
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ ok: true, remaining: filtered.length }));
+    res.end(JSON.stringify({ ok: true, remaining: filtered.length, clonesRemoved }));
     return;
   }
 
   // ── DELETE /api/reviews (clear all) ──────────────────────────────────────
   if (req.method === "DELETE" && url.pathname === "/api/reviews") {
     const reviews: PRReview[] = loadReviews();
-    reviews.forEach((review: PRReview) => deleteReviewLog(review));
+
+    let clonesRemoved = 0;
+    for (const review of reviews) {
+      deleteReviewLog(review);
+      if (deleteCloneDirectory(review)) clonesRemoved += 1;
+    }
+
     saveReviews([]);
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ ok: true, remaining: 0 }));
+    res.end(JSON.stringify({ ok: true, remaining: 0, clonesRemoved }));
     return;
   }
 
