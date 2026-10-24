@@ -175,6 +175,19 @@ async function runWithClaudeCode(
   fs.writeFileSync(skillPath, skill, "utf8");
   fs.writeFileSync(messagePath, `Please review this PR: ${prUrl}`, "utf8");
 
+  // Granted per invocation rather than written into the user's global
+  // ~/.claude/settings.json: a scheduled job has no business widening the
+  // permissions of every interactive Claude Code session on the machine. Keeping
+  // the list here also stops it drifting from what the skill actually does.
+  const ALLOWED_TOOLS = [
+    "Read",
+    "Bash(gh pr view*)",
+    "Bash(gh pr diff*)",
+    "Bash(gh repo clone*)",
+    "Bash(mkdir*)",
+    "Bash(grep*)",
+  ].join(",");
+
   const header = `=== PR Review: ${prUrl}\n=== Started: ${new Date().toISOString()}\n\n`;
   if (!fs.existsSync(path.dirname(logPath))) {
     fs.mkdirSync(path.dirname(logPath), { recursive: true });
@@ -184,7 +197,8 @@ async function runWithClaudeCode(
   return new Promise<string>((resolve, reject) => {
     const proc = spawn("bash", [
       "-c",
-      `claude --print --system-prompt "$(cat '${skillPath}')" "$(cat '${messagePath}')"`
+      `claude --print --allowedTools '${ALLOWED_TOOLS}'`
+      + ` --system-prompt "$(cat '${skillPath}')" "$(cat '${messagePath}')"`
     ]);
 
     // spawn() takes no encoding option — that belongs to the *Sync variants — so

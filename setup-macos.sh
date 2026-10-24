@@ -58,52 +58,9 @@ if [ -z "$GH_PATH" ]; then
   echo ""
 fi
 
-# ── Claude Code permissions ───────────────────────────────────────────────────
-
-echo "🔐  Configuring Claude Code permissions for autonomous PR review..."
-
-CLAUDE_SETTINGS_DIR="$HOME/.claude"
-CLAUDE_SETTINGS_FILE="$CLAUDE_SETTINGS_DIR/settings.json"
-
-mkdir -p "$CLAUDE_SETTINGS_DIR"
-
-if [ -f "$CLAUDE_SETTINGS_FILE" ]; then
-  echo "    ~/.claude/settings.json already exists — merging allowedTools..."
-  node -e "
-    const fs = require('fs');
-    const path = '$CLAUDE_SETTINGS_FILE';
-    let settings = {};
-    try { settings = JSON.parse(fs.readFileSync(path, 'utf8')); } catch {}
-    const required = [
-      'read',
-      'bash(gh pr view*)',
-      'bash(gh pr diff*)',
-      'bash(gh repo clone*)',
-      'bash(mkdir*)',
-      'bash(grep*)'
-    ];
-    const existing = settings.allowedTools || [];
-    const merged = Array.from(new Set([...existing, ...required]));
-    settings.allowedTools = merged;
-    fs.writeFileSync(path, JSON.stringify(settings, null, 2));
-    console.log('    Merged. allowedTools:', merged.join(', '));
-  "
-else
-  echo "    Creating ~/.claude/settings.json..."
-  cat > "$CLAUDE_SETTINGS_FILE" << 'CLAUDE_SETTINGS'
-{
-  "allowedTools": [
-    "read",
-    "bash(gh pr view*)",
-    "bash(gh pr diff*)",
-    "bash(gh repo clone*)",
-    "bash(mkdir*)",
-    "bash(grep*)"
-  ]
-}
-CLAUDE_SETTINGS
-  echo "    Created with PR review permissions."
-fi
+# Claude Code permissions are no longer configured here. The review agent passes
+# its own --allowedTools on each invocation, so setup does not touch
+# ~/.claude/settings.json and your interactive sessions keep their own rules.
 
 # ── launchd ───────────────────────────────────────────────────────────────────
 

@@ -163,18 +163,22 @@ The agent uses the `code-review` skill from your `claude-toolkit` repo. The skil
 
 ### Claude Code Permissions
 
-`setup-macos.sh` automatically configures `~/.claude/settings.json` to pre-approve the exact tools the skill needs so reviews run without any manual approval prompts:
+The agent passes `--allowedTools` on each `claude --print` invocation, granting exactly the tools the skill needs so reviews run without approval prompts:
 
 | Permission | Why |
 |---|---|
-| `read` | Reading files from the cloned repo |
-| `bash(gh pr view*)` | Fetching PR metadata |
-| `bash(gh pr diff*)` | Fetching the PR diff |
-| `bash(gh repo clone*)` | Cloning the PR branch |
-| `bash(mkdir*)` | Creating `~/PR-Reviews/` if it doesn't exist |
-| `bash(grep*)` | Searching the full repo for dangling references |
+| `Read` | Reading files from the cloned repo |
+| `Bash(gh pr view*)` | Fetching PR metadata |
+| `Bash(gh pr diff*)` | Fetching the PR diff |
+| `Bash(gh repo clone*)` | Cloning the PR branch |
+| `Bash(mkdir*)` | Creating `~/PR-Reviews/` if it doesn't exist |
+| `Bash(grep*)` | Searching the full repo for dangling references |
 
-No other tools are pre-approved. Claude Code will still prompt for anything outside this set.
+These are scoped to the agent's own runs. **Nothing is written to `~/.claude/settings.json`**, so your interactive Claude Code sessions keep whatever permission rules you set for yourself — a scheduled job should not widen them.
+
+Because a headless `--print` run cannot prompt, a review needing a tool outside this list will fail rather than pause. The list lives in `runWithClaudeCode` in [run-reviews.ts](run-reviews.ts), next to the code that uses it.
+
+> Earlier versions of `setup-macos.sh` merged these permissions into `~/.claude/settings.json`. If you ran it before this change, those entries are still there — harmless, but you can remove them by hand if you'd rather not have them granted globally.
 
 ### Open in Claude Code
 
