@@ -864,6 +864,8 @@
 
     .commit-item:hover { background: var(--panel-2); }
     .commit-sha    { color: var(--accent-deep); font-family: var(--mono); flex-shrink: 0; }
+    a.commit-sha        { text-decoration: none; }
+    a.commit-sha:hover  { text-decoration: underline; }
     .commit-msg    { color: var(--ink-body); flex: 1; word-break: break-word; }
     .commit-author { color: var(--ink-faint); font-size: 0.7rem; flex-shrink: 0; }
 
@@ -1248,6 +1250,7 @@
     COMMENTED:         "you commented",
     CHANGES_REQUESTED:  "you requested changes",
     APPROVED:          "you approved",
+    DISMISSED:         "your review was dismissed",
   };
 
   function deriveReviewAction(review, isRunning = false) {
@@ -1272,16 +1275,31 @@
     const isOutOfDate   = canCompare && review.currentHeadSha !== dismissedSha;
     if (isOutOfDate) return "rerun";
 
-    // Either you have never given feedback, or the author has pushed since you did
-    const hasSubmitted = Boolean(review.lastReviewSubmittedAt);
-    const hasRespondedSince = (review.newCommits ?? []).some((commit) => {
-      return Boolean(commit.date) && commit.date > review.lastReviewSubmittedAt;
-    });
-    const needsReview = !hasSubmitted || hasRespondedSince;
-    if (needsReview) return "needs-review";
-
+    // Checked before the author's pushes, which matches GitHub: an approval
+    // survives new commits unless the repo dismisses stale approvals, and while
+    // it stands the PR is mergeable and nothing is needed from you. On a repo
+    // that does dismiss, GitHub moves the review to DISMISSED and the branch
+    // below picks it up instead.
     const isApproved = review.reviewState === "APPROVED";
     if (isApproved) return "approved";
+
+    // GitHub threw the approval out because the author pushed, so GitHub is
+    // waiting on you again. Without this the PR read as "waiting on author"
+    // indefinitely — a stalemate nothing but a visit to GitHub would reveal.
+    const wasDismissed = review.reviewState === "DISMISSED";
+    if (wasDismissed) return "needs-review";
+
+    // Either you have never given feedback, or the author has pushed since you
+    // did. Read from lastAuthorPushAt rather than the newCommits list because
+    // dismissing that list is a judgment about re-running the agent, and it
+    // must not also decide whose turn it is. Merges from the base branch are
+    // already excluded upstream, so they never put the turn back on you.
+    const hasSubmitted = Boolean(review.lastReviewSubmittedAt);
+    const pushedAt = review.lastAuthorPushAt ?? null;
+    const hasRespondedSince = Boolean(pushedAt)
+      && pushedAt > review.lastReviewSubmittedAt;
+    const needsReview = !hasSubmitted || hasRespondedSince;
+    if (needsReview) return "needs-review";
 
     return "waiting-author";
   }
@@ -2847,13 +2865,26 @@
     document.body.style.overflow = 'hidden';
     document.getElementById('commits-modal-title').textContent =
       `${commits.length} new commit${commits.length !== 1 ? 's' : ''} since your last review`;
-    document.getElementById('commits-modal-body').innerHTML = commits.map(c => `
+    // The sha links out, because deciding whether a re-run is warranted means
+    // reading what actually landed. The repo comes from the review rather than
+    // the id, since a mock id is not in owner/repo#number form. GitHub resolves
+    // the 7-character sha we store.
+    const review = reviews.find((entry) => entry.id === id);
+    const repo = review?.repo ?? null;
+
+    document.getElementById('commits-modal-body').innerHTML = commits.map((commit) => {
+      const shaCell = repo
+        ? `<a class="commit-sha" href="https://github.com/${escHtml(repo)}/commit/${escHtml(commit.sha)}"`
+          + ` target="_blank" rel="noopener noreferrer" title="View this commit on GitHub">${escHtml(commit.sha)}</a>`
+        : `<span class="commit-sha">${escHtml(commit.sha)}</span>`;
+      return `
       <div class="commit-item">
-        <span class="commit-sha">${escHtml(c.sha)}</span>
-        <span class="commit-msg">${escHtml(c.message)}</span>
-        <span class="commit-author">${escHtml(c.author)}</span>
+        ${shaCell}
+        <span class="commit-msg">${escHtml(commit.message)}</span>
+        <span class="commit-author">${escHtml(commit.author)}</span>
       </div>
-    `).join('');
+    `;
+    }).join('');
     // Warn before a re-run discards drafts queued against the current findings
     const draftCount = queuedDraftCount(id);
     document.getElementById('commits-rerun-note').innerHTML = draftCount > 0
@@ -2969,6 +3000,7 @@
         reviewState: "PENDING", prStatus: "open", reviewStatus: "ok", logFile: "mock.log",
         lastReviewSubmittedAt: null,
         reviewedHeadSha: "a1a1a1a", currentHeadSha: "a1a1a1a", commitsSeenSha: null,
+        lastAuthorPushAt: null,
         feedback: mockFeedback({
           verdict: "APPROVE WITH NITS",
           summary: "Solid implementation of **token bucket rate limiting** using Redis `INCR` with TTLs. Error handling falls back to allow-on-failure, which matches the stated availability goals, and tests cover both the burst and refill paths.",
@@ -2992,6 +3024,7 @@
         reviewState: "CHANGES_REQUESTED", prStatus: "open", reviewStatus: "ok", logFile: "mock.log",
         lastReviewSubmittedAt: daysAgo(2),
         reviewedHeadSha: "b2b2b2b", currentHeadSha: "c3c3c3c", commitsSeenSha: null,
+        lastAuthorPushAt: daysAgo(0.6),
         newCommits: [
           { sha: "a1b2c3d", message: "Fix validation race on async fields", author: "jchen", date: daysAgo(1) },
           { sha: "e4f5a6b", message: "Address review: debounce email check", author: "jchen", date: daysAgo(0.6) },
@@ -3032,6 +3065,7 @@
         reviewState: "COMMENTED", prStatus: "open", reviewStatus: "ok", logFile: "mock.log",
         lastReviewSubmittedAt: daysAgo(1),
         reviewedHeadSha: "d4d4d4d", currentHeadSha: "d4d4d4d", commitsSeenSha: null,
+        lastAuthorPushAt: daysAgo(3),
         feedback: mockFeedback({
           verdict: "NEEDS DISCUSSION",
           summary: "Straightforward storage migration. One open question on whether the explicit `iops` setting is intentional, since gp3's baseline already covers it at this volume size and the override adds cost.",
@@ -3055,6 +3089,7 @@
         reviewState: "PENDING", prStatus: "open", reviewStatus: "failed", logFile: "mock.log",
         lastReviewSubmittedAt: null,
         reviewedHeadSha: null, currentHeadSha: null, commitsSeenSha: null,
+        lastAuthorPushAt: null,
         feedback: "",
       },
       {
@@ -3065,6 +3100,7 @@
         reviewState: "APPROVED", prStatus: "open", reviewStatus: "ok", logFile: "mock.log",
         lastReviewSubmittedAt: daysAgo(3),
         reviewedHeadSha: "f6f6f6f", currentHeadSha: "f6f6f6f", commitsSeenSha: null,
+        lastAuthorPushAt: daysAgo(5),
         feedback: mockFeedback({
           verdict: "APPROVE",
           summary: "Pins both providers to exact versions, which is what the drift incident last month called for.",
@@ -3083,6 +3119,7 @@
         reviewState: "APPROVED", prStatus: "merged", reviewStatus: "ok", logFile: "mock.log",
         lastReviewSubmittedAt: daysAgo(4),
         reviewedHeadSha: "e5e5e5e", currentHeadSha: "e5e5e5e", commitsSeenSha: null,
+        lastAuthorPushAt: daysAgo(6),
         feedback: "## Verdict\nApprove\n\n## Summary\nToken bump is clean and the contrast fixes bring all text past **WCAG AA**. No regressions found in the snapshot diff.",
       },
       // The three below exist so every action state is visible in the mock. The
@@ -3096,6 +3133,7 @@
         reviewState: "COMMENTED", prStatus: "open", reviewStatus: "ok", logFile: "mock.log",
         lastReviewSubmittedAt: daysAgo(3),
         reviewedHeadSha: "f7f7f7f", currentHeadSha: "a9a9a9a", commitsSeenSha: null,
+        lastAuthorPushAt: daysAgo(1),
         feedback: "## Verdict\nComment\n\n## Summary\nThe extraction is clean and the shared module reads better than the two copies it replaces. One thing to settle before this lands: the shared default backoff is `250ms`, where the upload path previously used `100ms` and the webhook path `500ms`. Both callers change behaviour and the description does not mention it.",
       },
       {
@@ -3106,7 +3144,22 @@
         reviewState: "COMMENTED", prStatus: "open", reviewStatus: "ok", logFile: "mock.log",
         lastReviewSubmittedAt: daysAgo(6),
         reviewedHeadSha: "b8b8b8b", currentHeadSha: "c4c4c4c", commitsSeenSha: null,
+        lastAuthorPushAt: daysAgo(2),
         feedback: "## Verdict\nComment\n\n## Summary\nPinning the providers is the right call and the lockfile is committed alongside. The `aws` provider is pinned as `~> 5.0` rather than to an exact version, so a `terraform init` can still pick up a new minor — worth deciding whether that is intended, since the stated goal was reproducible plans.",
+      },
+      {
+        // GitHub threw out an approval because the author pushed, which is what
+        // a repo with "dismiss stale approvals" does. The re-run was already
+        // dismissed, so this isolates the state GitHub itself put us in.
+        id: "mock-10", repo: "tcyph33/api-gateway", pull_number: 158, author: "samdev",
+        title: "Swap the config loader to a lazy singleton",
+        url: "#", filesChanged: 5, additions: 112, deletions: 40,
+        reviewedAt: daysAgo(2), prCreatedAt: daysAgo(6), reviewRequestedAt: daysAgo(5),
+        reviewState: "DISMISSED", prStatus: "open", reviewStatus: "ok", logFile: "mock.log",
+        lastReviewSubmittedAt: daysAgo(2),
+        reviewedHeadSha: "aa11bb2", currentHeadSha: "cc33dd4", commitsSeenSha: "cc33dd4",
+        lastAuthorPushAt: daysAgo(0.5),
+        feedback: "## Verdict\nApprove\n\n## Summary\nThe lazy singleton reads well and the double-checked init is correct. Worth noting the loader now throws on a missing key where it previously returned undefined, which two callers rely on — both are updated here.",
       },
       {
         id: "mock-9", repo: "tcyph33/web-client", pull_number: 76, author: "jchen",
@@ -3116,6 +3169,7 @@
         reviewState: "COMMENTED", prStatus: "closed", reviewStatus: "ok", logFile: "mock.log",
         lastReviewSubmittedAt: daysAgo(14),
         reviewedHeadSha: "d1d1d1d", currentHeadSha: "d1d1d1d", commitsSeenSha: null,
+        lastAuthorPushAt: daysAgo(16),
         feedback: "## Verdict\nRequest changes\n\n## Summary\nThe cache layer works, but it writes to IndexedDB on every render rather than when the data actually changes, which shows up as dropped frames on the settings page. The write trigger needs reworking before this grows any further.",
       },
     ];

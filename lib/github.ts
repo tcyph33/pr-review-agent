@@ -3,7 +3,17 @@ import type { RestEndpointMethodTypes } from "@octokit/rest";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type ReviewState = "PENDING" | "COMMENTED" | "CHANGES_REQUESTED" | "APPROVED";
+// DISMISSED is a state GitHub puts a review into when the repo enables
+// "Dismiss stale pull request approvals when new commits are pushed". It must be
+// distinguishable from PENDING: the user did review, and GitHub is now waiting
+// on them again. Collapsing the two left such a PR reading as "waiting on
+// author" forever, which is a stalemate only a visit to GitHub would reveal.
+export type ReviewState =
+  | "PENDING"
+  | "COMMENTED"
+  | "CHANGES_REQUESTED"
+  | "APPROVED"
+  | "DISMISSED";
 export type PRStatus    = "open" | "merged" | "closed";
 
 export type SearchPRItem =
@@ -459,6 +469,7 @@ export async function getMyReviewState(
     if (state === "APPROVED")          return "APPROVED";
     if (state === "CHANGES_REQUESTED") return "CHANGES_REQUESTED";
     if (state === "COMMENTED")         return "COMMENTED";
+    if (state === "DISMISSED")         return "DISMISSED";
     return "PENDING";
   } catch {
     return "PENDING";
@@ -702,6 +713,16 @@ export interface PRRefreshData {
   newCommits: CommitSummary[];
   /** The PR's head SHA right now, for comparison against the SHA a review was generated from. */
   headSha: string;
+  /**
+   * When the author last pushed work of their own, merges from the base branch
+   * excluded. Null when the commit list could not be read.
+   *
+   * Deliberately independent of newCommits, which is recomputed from a baseline
+   * the user moves forward by dismissing. Deriving "has the author pushed since
+   * I last reviewed" from that list made the answer vanish on the next refresh
+   * after a dismissal, so the question could not be answered durably at all.
+   */
+  lastAuthorPushAt: string | null;
 }
 
 export async function refreshPRData(
@@ -733,6 +754,7 @@ export async function refreshPRData(
     if (state === "APPROVED")          reviewState = "APPROVED";
     else if (state === "CHANGES_REQUESTED") reviewState = "CHANGES_REQUESTED";
     else if (state === "COMMENTED")    reviewState = "COMMENTED";
+    else if (state === "DISMISSED")    reviewState = "DISMISSED";
   }
 
   // PR status
@@ -754,32 +776,44 @@ export async function refreshPRData(
   // baseline at all and always report zero commits.
   const since = commitsSeenAt ?? reviewedAt;
   let newCommits: CommitSummary[] = [];
-  if (since) {
-    try {
-      const { data: commits } = await octokit.rest.pulls.listCommits({
-        owner, repo, pull_number, per_page: 100,
-      });
-      newCommits = commits
-        .filter((commit) => {
-          // A merge from the base branch is not work the author did on this PR
-          if (isMergeCommit(commit)) return false;
-          const authoredAt = commit.commit.committer?.date ?? commit.commit.author?.date ?? "";
-          return authoredAt > since;
-        })
+  let lastAuthorPushAt: string | null = null;
+
+  try {
+    const { data: commits } = await octokit.rest.pulls.listCommits({
+      owner, repo, pull_number, per_page: 100,
+    });
+
+    const committedAt = (commit: typeof commits[number]): string =>
+      commit.commit.committer?.date ?? commit.commit.author?.date ?? "";
+
+    // A merge from the base branch is not work the author did on this PR, so it
+    // neither makes the findings stale nor puts the turn back with the reviewer
+    const authoredCommits = commits.filter((commit) => !isMergeCommit(commit));
+
+    for (const commit of authoredCommits) {
+      const authoredAt = committedAt(commit);
+      const isNewest = authoredAt > (lastAuthorPushAt ?? "");
+      if (isNewest) lastAuthorPushAt = authoredAt;
+    }
+
+    if (since) {
+      newCommits = authoredCommits
+        .filter((commit) => committedAt(commit) > since)
         .map((c) => ({
           sha:     c.sha.slice(0, 7),
           message: c.commit.message.split("\n")[0], // first line only
           author:  c.commit.author?.name ?? c.author?.login ?? "unknown",
-          date:    c.commit.committer?.date ?? c.commit.author?.date ?? "",
+          date:    committedAt(c),
         }));
-    } catch {
-      // best effort
     }
+  } catch {
+    // best effort
   }
 
   return {
     reviewState, lastReviewSubmittedAt, prStatus,
     additions, deletions, filesChanged, newCommits,
     headSha: prData.data.head.sha,
+    lastAuthorPushAt,
   };
 }

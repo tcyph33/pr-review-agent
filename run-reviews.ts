@@ -324,6 +324,7 @@ function buildUnreviewableRecord(item: SearchPRItem, orchLog: (msg: string) => v
     reviewState: "PENDING", reviewStatus: "failed", prStatus: "open",
     prCreatedAt: new Date().toISOString(), reviewRequestedAt: null, triggerType: "commenter",
     lastReviewSubmittedAt: null, newCommits: [], commitsSeenAt: null,
+    lastAuthorPushAt: null,
     reviewedHeadSha: null, currentHeadSha: null, commitsSeenSha: null,
     reviewedAt: new Date().toISOString(), logFile,
   };
@@ -380,6 +381,7 @@ async function reviewPR(
       deletions: files.reduce((s, f) => s + f.deletions, 0),
       feedback, reviewState, reviewStatus: "success", prStatus: "open",
       lastReviewSubmittedAt: null, newCommits: [], commitsSeenAt: null,
+    lastAuthorPushAt: null,
       // A freshly generated review is by definition current, so both SHAs match
       reviewedHeadSha: details.head.sha, currentHeadSha: details.head.sha, commitsSeenSha: null,
       prCreatedAt: details.created_at, reviewRequestedAt, triggerType, reviewedAt: new Date().toISOString(), logFile,
@@ -411,6 +413,7 @@ async function reviewPR(
       author, branch, filesChanged, additions, deletions,
       feedback: "", reviewState: "PENDING", reviewStatus: "failed", prStatus: "open",
       lastReviewSubmittedAt: null, newCommits: [], commitsSeenAt: null,
+    lastAuthorPushAt: null,
       reviewedHeadSha, currentHeadSha: reviewedHeadSha, commitsSeenSha: null,
       prCreatedAt, reviewRequestedAt: null, triggerType, reviewedAt: new Date().toISOString(), logFile,
     };

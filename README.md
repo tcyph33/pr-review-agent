@@ -147,6 +147,39 @@ Open **http://localhost:3000/dashboard/** in any browser.
 - **Clear All** wipes all reviews after confirmation
 - Auto-refreshes every 60 seconds
 
+### What the status chip means
+
+One chip per card answering "what now", most urgent first. The chip replaces the
+raw GitHub fields, which are demoted to the facts line beneath it.
+
+| Chip | Means |
+|---|---|
+| **Agent running** | A re-run is in progress, with elapsed time |
+| **Review failed** | The agent errored on this PR — see the log |
+| **Agent re-run needed** | The head moved, so the stored findings describe older code |
+| **Needs your review** | Your turn: you have never given feedback, or the author has pushed since you did |
+| **Waiting on author** | You have reviewed and nothing has happened since |
+| **Approved** | Your approval stands |
+| **Merged** / **Closed** | Nothing left to act on |
+
+Two parts of this are deliberate and easy to get wrong when changing it:
+
+**An approval follows GitHub's own rules.** GitHub keeps an approval when new
+commits land, unless the repo enables *"Dismiss stale pull request approvals when
+new commits are pushed"*. While the approval stands the PR is mergeable and
+nothing is needed from you, so the chip says **Approved**. On a repo that does
+dismiss, GitHub moves the review to `DISMISSED` and the chip becomes **Needs your
+review** — without that, such a PR would read as "Waiting on author" forever
+while GitHub was actually waiting on you to re-approve.
+
+**Whose turn it is comes from `lastAuthorPushAt`, not the commit list.**
+Dismissing new commits with **No re-run needed** says the agent need not look
+again; it must not also decide whose turn it is. Those are separate judgments,
+and the commit list is cleared by the first one. So the turn is read from the
+newest non-merge commit date compared against your last submitted review — which
+also means a merge from the base branch never lands on your plate, since merges
+are excluded upstream.
+
 The dashboard server (`server.ts`) starts automatically at login via launchd and restarts itself if it ever crashes.
 
 ---

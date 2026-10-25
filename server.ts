@@ -347,6 +347,7 @@ const server = http.createServer(async (req, res) => {
         review.deletions           = refreshed.deletions;
         review.filesChanged        = refreshed.filesChanged;
         review.newCommits          = refreshed.newCommits;
+        review.lastAuthorPushAt    = refreshed.lastAuthorPushAt;
         review.currentHeadSha      = refreshed.headSha;
         // reviewedHeadSha is deliberately absent from this list. This endpoint
         // only re-reads GitHub metadata — the stored feedback still describes

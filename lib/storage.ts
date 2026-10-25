@@ -68,6 +68,17 @@ export interface PRReview {
   // recorded as a SHA rather than only a timestamp so a force-push or rebase —
   // which can carry commit dates older than the review — still re-surfaces.
   commitsSeenSha: string | null;
+
+  // When the author last pushed work of their own, merges from the base branch
+  // excluded. Compared against lastReviewSubmittedAt to answer whose turn it is.
+  //
+  // Stored separately from newCommits because dismissing the commit list moves
+  // that list's baseline forward and empties it, which would silently also
+  // answer "whose turn is it" — two judgments the user makes separately.
+  //
+  // Reviews recorded before this field existed have it absent, so readers must
+  // treat a missing value as unknown rather than as "never pushed".
+  lastAuthorPushAt: string | null;
 }
 
 // ── Orchestration log helpers ─────────────────────────────────────────────────
