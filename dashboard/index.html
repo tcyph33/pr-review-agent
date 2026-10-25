@@ -104,6 +104,8 @@
     .btn-claude:hover { background: var(--accent-tint-hover); }
     .btn-log       { background: var(--panel); color: var(--ink-mute); border: 1px solid var(--line); font-size: 0.7rem; padding: 4px 10px; }
     .btn-log:hover { color: var(--warn); border-color: var(--warn-border); background: var(--warn-tint); }
+    .btn-cancel    { background: var(--bad-tint); color: var(--bad); border: 1px solid var(--bad-border); font-size: 0.7rem; padding: 4px 10px; }
+    .btn-cancel:hover { background: var(--bad-tint-hover); }
 
     .controls-bar {
       display: flex;
@@ -318,6 +320,36 @@
 
     .action-chip-link { cursor: pointer; }
     .action-chip-link:hover { text-decoration: underline; }
+
+    /* A failed re-run is a passing fact about an attempt, not a state of the
+       review, so it reads as a small note under the facts rather than taking
+       over the chip — the status above it is still true. */
+    .rerun-failed-note {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 6px;
+      font-size: 0.72rem;
+      color: var(--bad);
+    }
+    .rerun-failed-x {
+      background: transparent;
+      border: none;
+      color: var(--bad);
+      opacity: 0.65;
+      font-size: 0.78rem;
+      line-height: 1;
+      padding: 0 2px;
+      cursor: pointer;
+    }
+    .rerun-failed-x:hover { opacity: 1; }
+
+    /* A live run reads as live at a glance, without needing the label read */
+    .action-live { animation: chip-pulse 1.8s ease-in-out infinite; }
+    @keyframes chip-pulse { 50% { opacity: 0.55; } }
+    @media (prefers-reduced-motion: reduce) {
+      .action-live { animation: none; }
+    }
 
     .card-facts { font-size: 0.72rem; color: var(--ink-faint); line-height: 1.5; }
     .fact-link  { color: var(--accent-deep); cursor: pointer; }
@@ -1046,6 +1078,7 @@
   <span class="controls-label">Action:</span>
   <select id="filter-action" onchange="applyControls()">
     <option value="all">All actions</option>
+    <option value="running">Agent running</option>
     <option value="needs-review">Needs your review</option>
     <option value="rerun">Agent re-run needed</option>
     <option value="waiting-author">Waiting on author</option>
@@ -1200,13 +1233,14 @@
   // One state per review, answering "what now" rather than reporting raw GitHub
   // fields. `order` drives the attention sort; lower means more urgent.
   const REVIEW_ACTIONS = {
-    failed:           { label: "Review failed",       tone: "bad",    order: 0 },
-    rerun:            { label: "Agent re-run needed", tone: "warn",   order: 1 },
-    "needs-review":   { label: "Needs your review",   tone: "accent", order: 2 },
-    "waiting-author": { label: "Waiting on author",   tone: "mute",   order: 3 },
-    approved:         { label: "Approved",            tone: "good",   order: 4 },
-    merged:           { label: "Merged",              tone: "mute",   order: 5 },
-    closed:           { label: "Closed",              tone: "mute",   order: 6 },
+    running:          { label: "Agent running",       tone: "accent", order: 0 },
+    failed:           { label: "Review failed",       tone: "bad",    order: 1 },
+    rerun:            { label: "Agent re-run needed", tone: "warn",   order: 2 },
+    "needs-review":   { label: "Needs your review",   tone: "accent", order: 3 },
+    "waiting-author": { label: "Waiting on author",   tone: "mute",   order: 4 },
+    approved:         { label: "Approved",            tone: "good",   order: 5 },
+    merged:           { label: "Merged",              tone: "mute",   order: 6 },
+    closed:           { label: "Closed",              tone: "mute",   order: 7 },
   };
 
   const REVIEW_STATE_TEXT = {
@@ -1216,7 +1250,13 @@
     APPROVED:          "you approved",
   };
 
-  function deriveReviewAction(review) {
+  function deriveReviewAction(review, isRunning = false) {
+    // A live agent run outranks every stored fact: whatever the record says now
+    // is about to be replaced, so the only sensible move is to wait or cancel.
+    // Passed in rather than read from module state so this stays a pure
+    // function of its arguments.
+    if (isRunning) return "running";
+
     // A finished PR outranks everything else, including a failed agent run:
     // there is nothing left to act on either way.
     if (review.prStatus === "merged") return "merged";
@@ -1246,6 +1286,108 @@
     return "waiting-author";
   }
 
+  // ── Live agent runs ──
+  // Review id → ISO start time, for every re-run the server has in progress.
+  // Held separately from `reviews` because it is polled far more often: the
+  // review records refresh once a minute, which would make a run look finished
+  // long before it is, or still running long after.
+  let activeReruns = new Map();
+
+  // Review id → the outcome of its last re-run, when that run failed. A failed
+  // re-run leaves the stored review untouched, so without this the card would
+  // quietly go back to describing a review the re-run never replaced.
+  let failedReruns = new Map();
+
+  function isRerunning(reviewId) {
+    return activeReruns.has(reviewId);
+  }
+
+  function rerunFailureFor(reviewId) {
+    return failedReruns.get(reviewId) ?? null;
+  }
+
+  // Deliberately just the fact. Why it failed is in the PR's log, and View Log
+  // is in the same footer, so spelling that out here only makes the card shout.
+  function rerunNoticeHtml(reviewId) {
+    const outcome = rerunFailureFor(reviewId);
+    if (outcome === null) return "";
+    return `<div class="rerun-failed-note">`
+      + `Re-run failed`
+      + `<button class="rerun-failed-x" data-id="${escHtml(reviewId)}"`
+      + ` onclick="dismissRerunFailure(this)" title="Dismiss" aria-label="Dismiss">✕</button>`
+      + `</div>`;
+  }
+
+  function rerunElapsedText(reviewId) {
+    const startedAt = activeReruns.get(reviewId);
+    if (!startedAt) return "";
+    const minutes = Math.floor((Date.now() - new Date(startedAt).getTime()) / 60000);
+    // Lowercase because .action-chip uppercases its text, so this renders as MIN
+    return minutes < 1 ? "just started" : `${minutes} min`;
+  }
+
+  async function pollReruns() {
+    if (MOCK_MODE) {
+      // Seeded onto mocks that exist for these states, so no other card's state
+      // is hidden. Every action state is then visible at once in the mock.
+      const isSeeded = activeReruns.has("mock-7");
+      if (isSeeded) return;
+      activeReruns.set("mock-7", new Date(Date.now() - 3 * 60000).toISOString());
+      failedReruns.set("mock-8", {
+        reviewId: "mock-8",
+        endedAt: new Date(Date.now() - 9 * 60000).toISOString(),
+        exitCode: 1,
+        signal: null,
+      });
+      applyControls();
+      return;
+    }
+
+    let running = [];
+    let failed = [];
+    try {
+      const response = await fetch("/api/reruns?nocache=" + Date.now());
+      if (!response.ok) return;
+      const payload = await response.json();
+      running = payload.running ?? [];
+      failed = payload.failed ?? [];
+    } catch {
+      // The in-progress badge is a convenience — a failed poll leaves the last
+      // known state rather than wrongly claiming nothing is running
+      return;
+    }
+
+    const previousRunningIds = new Set(activeReruns.keys());
+    const previousFailedIds = [...failedReruns.keys()].sort().join(",");
+
+    activeReruns = new Map(running.map((job) => [job.reviewId, job.startedAt]));
+    failedReruns = new Map(failed.map((outcome) => [outcome.reviewId, outcome]));
+
+    const hasFinished = [...previousRunningIds].some((id) => !activeReruns.has(id));
+    if (hasFinished) {
+      // The run has written its findings, so pull the new record rather than
+      // waiting up to a minute for the next scheduled refresh. This re-renders,
+      // which is what drops the finished card out of the running state and
+      // shows the failure notice if it ended badly.
+      await loadReviews();
+      return;
+    }
+
+    // Re-rendered on every tick while anything runs, so the elapsed time moves.
+    // The failure set is compared as well, so a failure this page has not drawn
+    // yet — one from before it loaded — appears without waiting for the next
+    // scheduled refresh.
+    const isAnythingRunning = activeReruns.size > 0;
+    const haveFailuresChanged = [...failedReruns.keys()].sort().join(",") !== previousFailedIds;
+    if (isAnythingRunning || haveFailuresChanged) applyControls();
+  }
+
+  // The one place that couples the action to the polled run state, so
+  // deriveReviewAction itself stays a pure function of its arguments
+  function actionFor(review) {
+    return deriveReviewAction(review, isRerunning(review.id));
+  }
+
   function buildSupportingFacts(review) {
     const facts = [];
 
@@ -1270,7 +1412,7 @@
   function renderSummary() {
     const bar     = document.getElementById("summary-bar");
     const open    = filteredReviews.filter(r => !r.prStatus || r.prStatus === "open");
-    const actions = open.map(deriveReviewAction);
+    const actions = open.map(actionFor);
 
     const needsYou   = actions.filter(action => action === "needs-review").length;
     const needsRerun = actions.filter(action => action === "rerun").length;
@@ -1305,12 +1447,12 @@
 
     filteredReviews = reviews
       .filter(r => repo   === "all" || r.repo === repo)
-      .filter(r => action === "all" || deriveReviewAction(r) === action);
+      .filter(r => action === "all" || actionFor(r) === action);
 
     filteredReviews.sort((a, b) => {
       // Most urgent action first, then oldest PR within the same action
       if (sort === "attention") {
-        const byAction = REVIEW_ACTIONS[deriveReviewAction(a)].order - REVIEW_ACTIONS[deriveReviewAction(b)].order;
+        const byAction = REVIEW_ACTIONS[actionFor(a)].order - REVIEW_ACTIONS[actionFor(b)].order;
         if (byAction !== 0) return byAction;
         return prAgeDays(b) - prAgeDays(a);
       }
@@ -1380,17 +1522,28 @@
       // One chip answering "what now", with the raw facts demoted beneath it.
       // The chip opens the commit list when there is one, since deciding whether
       // a re-run is really needed means looking at what landed.
-      const actionKey   = deriveReviewAction(r);
+      const isRunning   = isRerunning(r.id);
+      const actionKey   = actionFor(r);
       const action      = REVIEW_ACTIONS[actionKey];
-      const hasCommits  = (r.newCommits ?? []).length > 0;
-      const chipClass   = `action-chip action-${action.tone}${hasCommits ? " action-chip-link" : ""}`;
+      // A running agent takes the chip over, so the commit list moves to the
+      // supporting facts line rather than competing with it for the click
+      const hasCommits  = !isRunning && (r.newCommits ?? []).length > 0;
+      const chipClass   = `action-chip action-${action.tone}`
+        + (hasCommits ? " action-chip-link" : "")
+        + (isRunning ? " action-live" : "");
       const chipHandler = hasCommits
         ? ` data-id="${escHtml(r.id)}" data-commits="${escHtml(JSON.stringify(r.newCommits))}" onclick="showCommitsFromBadge(this)" title="See what changed"`
         : "";
+      const chipLabel   = isRunning
+        ? `${action.label} · ${escHtml(rerunElapsedText(r.id))}`
+        : action.label;
 
+      // The note sits under the facts rather than replacing the chip: the
+      // stored status is still true, a re-run having failed does not change it
       const statusPills = `
-        <span class="${chipClass}"${chipHandler}>${action.label}</span>
-        <div class="card-facts">${buildSupportingFacts(r)}</div>`;
+        <span class="${chipClass}"${chipHandler}>${chipLabel}</span>
+        <div class="card-facts">${buildSupportingFacts(r)}</div>
+        ${rerunNoticeHtml(r.id)}`;
 
       const cardBody = failed
         ? `<div class="card-body">
@@ -1404,8 +1557,11 @@
         <div class="card-footer">
           <div class="footer-actions">
             ${!failed ? `<button class="btn-claude" data-id="${escHtml(r.id)}" onclick="openInClaude(this)">Claude Code</button>` : ""}
-            <button class="btn-log" data-id="${escHtml(r.id)}" onclick="rerunReview(this)">Re-run agent</button>
+            ${isRunning
+              ? `<button class="btn-cancel" data-id="${escHtml(r.id)}" onclick="cancelRerun(this)">Cancel run</button>`
+              : `<button class="btn-log" data-id="${escHtml(r.id)}" onclick="rerunReview(this)">Re-run agent</button>`}
             ${r.logFile ? `<button class="btn-log" data-id="${escHtml(r.id)}" data-title="${escHtml(r.title)}" onclick="viewLog(this)">View Log</button>` : ""}
+
           </div>
           ${!failed ? `<span class="read-more" data-review-idx="${i}" onclick="openReviewModalByIdx(this)">Read full review →</span>` : ""}
         </div>`;
@@ -1723,12 +1879,21 @@
       + ` Start the review on GitHub first if you want to keep ${draftCount === 1 ? "it" : "them"}.`;
   }
 
+  // Returns the run's start time, which the caller records so the card shows
+  // the run immediately rather than on the next poll
   async function postRerun(reviewId) {
+    if (MOCK_MODE) {
+      // Flips the card into the running state so the transition is previewable
+      failedReruns.delete(reviewId);
+      return new Date().toISOString();
+    }
+
     const response = await fetch(`/api/reviews/${encodeURIComponent(reviewId)}/rerun`, { method: "POST" });
+    const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
-      const payload = await response.json().catch(() => ({}));
       throw new Error(payload.error ?? `HTTP ${response.status}`);
     }
+    return payload.startedAt ?? new Date().toISOString();
   }
 
   // Two stages when drafts exist: the first click warns, the second launches
@@ -1745,17 +1910,14 @@
     }
 
     const originalText = "Re-run agent";
-    button.textContent = "Opening...";
+    button.textContent = "Starting...";
     button.disabled = true;
     try {
-      await postRerun(reviewId);
-      button.textContent = "✓ Launched";
-      setTimeout(() => {
-        button.textContent = originalText;
-        button.disabled = false;
-        delete button.dataset.warned;
-        button.removeAttribute("title");
-      }, 2500);
+      const startedAt = await postRerun(reviewId);
+      // Recorded straight away rather than waiting for the next poll, so the
+      // card flips to the running state on this click
+      activeReruns.set(reviewId, startedAt);
+      applyControls();
     } catch (err) {
       button.textContent = originalText;
       button.disabled = false;
@@ -1764,12 +1926,43 @@
     }
   }
 
+  async function cancelRerun(button) {
+    const reviewId = button.getAttribute("data-id");
+    button.textContent = "Stopping...";
+    button.disabled = true;
+
+    if (MOCK_MODE) {
+      // A cancel is not a failure, so no notice is left behind — same as live
+      activeReruns.delete(reviewId);
+      applyControls();
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/reviews/${encodeURIComponent(reviewId)}/rerun`, { method: "DELETE" });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error ?? `HTTP ${response.status}`);
+      }
+      // Dropped locally so the card stops showing a run the agent is no longer
+      // doing; the next poll confirms it from the server
+      activeReruns.delete(reviewId);
+      applyControls();
+    } catch (err) {
+      button.textContent = "Cancel run";
+      button.disabled = false;
+      showError(`Could not cancel the re-run: ${err.message}`);
+    }
+  }
+
   async function rerunFromCommitsModal() {
     if (!currentCommitsId) return;
     const noteElement = document.getElementById("commits-rerun-note");
     try {
-      await postRerun(currentCommitsId);
-      noteElement.innerHTML = `<div class="queue-success">Re-run launched in Terminal. The dashboard will pick up the new review when it finishes.</div>`;
+      const startedAt = await postRerun(currentCommitsId);
+      activeReruns.set(currentCommitsId, startedAt);
+      applyControls();
+      noteElement.innerHTML = `<div class="queue-success">The agent is running. Its progress shows on the card, and the dashboard picks up the new review when it finishes.</div>`;
     } catch (err) {
       noteElement.innerHTML = `<div class="queue-error-box">Could not start the re-run: ${escHtml(err.message)}</div>`;
     }
@@ -2490,6 +2683,13 @@
   async function openInClaude(btn) {
     const id = btn.getAttribute("data-id");
     const original = btn.textContent;
+
+    if (MOCK_MODE) {
+      // This one opens a real Terminal window, so there is nothing to preview
+      showError("Mock mode: Claude Code needs the dashboard server running for real.");
+      return;
+    }
+
     btn.textContent = "Opening...";
     btn.disabled = true;
     try {
@@ -2517,6 +2717,12 @@
     content.innerHTML = '<span class="log-loading">Loading log...</span>';
     modal.classList.add("visible");
 
+    if (MOCK_MODE) {
+      const review = reviews.find((entry) => entry.id === id);
+      content.textContent = review ? mockLog(review) : "No log for this review.";
+      return;
+    }
+
     try {
       const res = await fetch(`/api/logs/${encodeURIComponent(id)}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -2524,6 +2730,30 @@
       content.textContent = text;
     } catch (err) {
       content.innerHTML = `<span class="log-loading">Failed to load log: ${err.message}</span>`;
+    }
+  }
+
+  async function dismissRerunFailure(button) {
+    const reviewId = button.getAttribute("data-id");
+    button.disabled = true;
+
+    if (MOCK_MODE) {
+      failedReruns.delete(reviewId);
+      applyControls();
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `/api/reviews/${encodeURIComponent(reviewId)}/dismiss-rerun-failure`,
+        { method: "POST" }
+      );
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      failedReruns.delete(reviewId);
+      applyControls();
+    } catch (err) {
+      button.disabled = false;
+      showError(`Could not dismiss the failure: ${err.message}`);
     }
   }
 
@@ -2538,6 +2768,14 @@
     const i    = btn.getAttribute("data-idx");
     const card = document.getElementById(`card-${i}`);
     card.classList.add("removing");
+
+    if (MOCK_MODE) {
+      // Gone until reload: mockReviews is the source, so there is nothing to delete
+      reviews = reviews.filter(r => r.id !== id);
+      setTimeout(() => { applyControls(); }, 220);
+      return;
+    }
+
     try {
       const res = await fetch(`/api/reviews/${encodeURIComponent(id)}`, { method: "DELETE" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -2567,6 +2805,19 @@
   async function markSeenFromModal() {
     if (!currentCommitsId) return;
     const noteElement = document.getElementById("commits-rerun-note");
+
+    if (MOCK_MODE) {
+      // Clears the commits the same way the server would, so the state the
+      // dismissal produces — chip back to its stored answer — is previewable
+      const review = reviews.find((entry) => entry.id === currentCommitsId);
+      if (review) {
+        review.newCommits = [];
+        review.commitsSeenSha = review.currentHeadSha ?? review.reviewedHeadSha ?? null;
+      }
+      closeCommitsModal();
+      applyControls();
+      return;
+    }
 
     try {
       const response = await fetch(`/api/reviews/${encodeURIComponent(currentCommitsId)}/mark-seen`, { method: "POST" });
@@ -2629,6 +2880,81 @@
       "```json", JSON.stringify(findings, null, 2), "```", "",
       "## What Looks Good", good, "",
       "## Verdict Rationale", rationale,
+    ].join("\n");
+  }
+
+  // Shaped like the real thing on purpose: one log per PR holding the whole
+  // run in order, which is what View Log shows after the re-run redesign. The
+  // variants are the three a reader actually has to tell apart — a clean run, a
+  // run still going, and a run that died before the agent was reached.
+  function mockLog(review) {
+    const stamp = (minutesAgo) =>
+      new Date(Date.now() - minutesAgo * 60000).toISOString();
+
+    const startup = [
+      `=== PR Review: https://github.com/${review.repo}/pull/${review.pull_number}`,
+      `=== Started: ${stamp(12)}`,
+      "",
+      "🚀  PR Review Agent starting...",
+      `📋  Log: logs/orchestration/${stamp(12).replace(/[:.]/g, "-").replace("T", "_").slice(0, 19)}.log`,
+    ];
+
+    // The case the red "Re-run failed" note points at: nothing reached the
+    // agent, and this is where the reason lives
+    const hasFailedRerun = rerunFailureFor(review.id) !== null;
+    if (hasFailedRerun) {
+      return [
+        ...startup,
+        "",
+        "❌  Pre-flight failed: gh auth status check failed",
+        "    gh: To get started with GitHub CLI, please run:  gh auth login",
+        "    Re-authenticate, then run the review again.",
+        "",
+        `=== Run failed: ${stamp(9)} — exit code 1`,
+      ].join("\n");
+    }
+
+    const reached = [
+      ...startup,
+      "✅  Pre-flight checks passed.",
+      "📥  Fetching review skill from REVIEW_SKILL_URL ...",
+      "    Loaded 18423 characters.",
+      "👤  Authenticated as tcyph33",
+      "",
+      `📋  Reviewing ${review.repo}#${review.pull_number} only — skipping the tier search and the unchanged-head check.`,
+      "    Tier: review-requested",
+      "",
+      `  🤖  Reviewing PR #${review.pull_number} in ${review.repo}: "${review.title}"`,
+      "",
+      `=== PR Review: https://github.com/${review.repo}/pull/${review.pull_number}`,
+      `=== Agent started: ${stamp(10)}`,
+      "",
+    ];
+
+    // claude --print returns nothing until it exits, so a live run's log really
+    // does stop here
+    const isRunning = isRerunning(review.id);
+    if (isRunning) return reached.join("\n");
+
+    const agentFailed = review.reviewStatus === "failed";
+    if (agentFailed) {
+      return [
+        ...reached,
+        `=== FAILED: ${stamp(8)}`,
+        "Claude Code failed: API error 529 overloaded_error: the model is",
+        "temporarily overloaded. Retried 3 times, then gave up.",
+      ].join("\n");
+    }
+
+    return [
+      ...reached,
+      review.feedback,
+      "",
+      `=== Completed: ${stamp(6)}`,
+      `  ✅  PR #${review.pull_number} review complete.`,
+      "💾  Result saved.",
+      "",
+      `=== Run complete: ${stamp(6)}`,
     ].join("\n");
   }
 
@@ -2759,6 +3085,39 @@
         reviewedHeadSha: "e5e5e5e", currentHeadSha: "e5e5e5e", commitsSeenSha: null,
         feedback: "## Verdict\nApprove\n\n## Summary\nToken bump is clean and the contrast fixes bring all text past **WCAG AA**. No regressions found in the snapshot diff.",
       },
+      // The three below exist so every action state is visible in the mock. The
+      // run states get cards of their own rather than being seeded onto another
+      // mock, which would hide whatever state that card was there to show.
+      {
+        id: "mock-7", repo: "tcyph33/api-gateway", pull_number: 151, author: "pdesai",
+        title: "Extract the retry policy into a shared module",
+        url: "#", filesChanged: 4, additions: 96, deletions: 71,
+        reviewedAt: daysAgo(3), prCreatedAt: daysAgo(5), reviewRequestedAt: daysAgo(4),
+        reviewState: "COMMENTED", prStatus: "open", reviewStatus: "ok", logFile: "mock.log",
+        lastReviewSubmittedAt: daysAgo(3),
+        reviewedHeadSha: "f7f7f7f", currentHeadSha: "a9a9a9a", commitsSeenSha: null,
+        feedback: "## Verdict\nComment\n\n## Summary\nThe extraction is clean and the shared module reads better than the two copies it replaces. One thing to settle before this lands: the shared default backoff is `250ms`, where the upload path previously used `100ms` and the webhook path `500ms`. Both callers change behaviour and the description does not mention it.",
+      },
+      {
+        id: "mock-8", repo: "tcyph33/infra", pull_number: 44, author: "lnguyen",
+        title: "Pin the Terraform provider versions",
+        url: "#", filesChanged: 3, additions: 28, deletions: 12,
+        reviewedAt: daysAgo(6), prCreatedAt: daysAgo(8), reviewRequestedAt: daysAgo(7),
+        reviewState: "COMMENTED", prStatus: "open", reviewStatus: "ok", logFile: "mock.log",
+        lastReviewSubmittedAt: daysAgo(6),
+        reviewedHeadSha: "b8b8b8b", currentHeadSha: "c4c4c4c", commitsSeenSha: null,
+        feedback: "## Verdict\nComment\n\n## Summary\nPinning the providers is the right call and the lockfile is committed alongside. The `aws` provider is pinned as `~> 5.0` rather than to an exact version, so a `terraform init` can still pick up a new minor — worth deciding whether that is intended, since the stated goal was reproducible plans.",
+      },
+      {
+        id: "mock-9", repo: "tcyph33/web-client", pull_number: 76, author: "jchen",
+        title: "Prototype the offline cache (superseded)",
+        url: "#", filesChanged: 22, additions: 640, deletions: 18,
+        reviewedAt: daysAgo(14), prCreatedAt: daysAgo(21), reviewRequestedAt: daysAgo(20),
+        reviewState: "COMMENTED", prStatus: "closed", reviewStatus: "ok", logFile: "mock.log",
+        lastReviewSubmittedAt: daysAgo(14),
+        reviewedHeadSha: "d1d1d1d", currentHeadSha: "d1d1d1d", commitsSeenSha: null,
+        feedback: "## Verdict\nRequest changes\n\n## Summary\nThe cache layer works, but it writes to IndexedDB on every render rather than when the data actually changes, which shows up as dropped frames on the settings page. The write trigger needs reworking before this grows any further.",
+      },
     ];
   }
 
@@ -2856,7 +3215,10 @@
     };
 
     const files = byReviewId[review.id] ?? [];
-    return { files, truncated: false };
+    // mock-2 reports 14 changed files against 3 in its mock diff, so flagging it
+    // truncated is what makes the "showing the first N of M" notice previewable
+    const truncated = review.id === "mock-2";
+    return { files, truncated };
   }
 
   async function loadReviews(callRefresh = false) {
@@ -2915,6 +3277,10 @@
 
   loadReviews(true);
   setInterval(() => loadReviews(true), 60000);
+  // Far more often than the review refresh: this is what makes a run visible
+  // while it happens, and it ticks the elapsed time on the card
+  pollReruns();
+  setInterval(pollReruns, 5000);
 </script>
 </body>
 </html>

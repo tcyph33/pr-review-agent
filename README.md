@@ -142,6 +142,7 @@ Open **http://localhost:3000/dashboard/** in any browser.
 - **Open PR** opens that single PR in a new tab
 - **Open All** opens every PR at once
 - **⬡ Claude Code** opens an interactive Claude Code session in Terminal with full repo context and prior agent feedback loaded
+- **Re-run agent** re-reviews that one PR in the background, with **Cancel run** while it goes — see [Re-running one PR](#re-running-one-pr)
 - **Dismiss** removes a single review from the dashboard
 - **Clear All** wipes all reviews after confirmation
 - Auto-refreshes every 60 seconds
@@ -191,6 +192,88 @@ Each dashboard card has an **⬡ Claude Code** button. Clicking it:
 
 This gives you an interactive follow-up session with the same context the agent had — full repo access, your skill, and the prior review.
 
+### Re-running one PR
+
+**Re-run agent** on a card re-reviews that PR alone, skipping the search and the
+no-new-commits check that a scheduled run applies. It is the same work as
+`npm run review -- <pr-url>`.
+
+The run happens in the background on the dashboard server, not in a Terminal
+window, so nothing has to stay open and the dashboard is usable while it goes:
+
+1. The card's chip switches to **Agent running** with the elapsed time, so an
+   in-flight run is visible at a glance from the list
+2. **Cancel run** stops the agent. The run is given its own process group, so
+   this reaches the agent itself rather than only the wrapping `npm`
+3. If it fails, a small red **Re-run failed** appears under the card's facts,
+   with an ✕ to dismiss it. It is a note rather than a status, because a failed
+   attempt does not change what the review itself needs — the chip keeps saying
+   that, and the note says the re-run did not happen. Why it failed is in the
+   PR's log, which **View Log** in the same footer opens. Cancelling is not a
+   failure and shows no note
+4. When it finishes, the dashboard picks up the new review within a few seconds
+   and the usual notification fires
+
+#### One log per PR
+
+There is a single log per PR, `logs/reviews/<owner>-<repo>-<number>.log`, and
+**View Log** shows it. On a re-run the review script owns that file from its
+first line, so one file holds the whole run in order: pre-flight, auth, the
+skill fetch, the trigger tier, the agent's output, and the outcome. The first
+write of a run truncates it; everything after appends.
+
+That matters because the things most likely to break a re-run — expired `gh`
+auth, a failed skill fetch, a cap firing — all happen *before* the agent is
+reached. They are in the log because the script puts them there, not because
+anything tails the process.
+
+The agent's own stderr is logged too, including when it exits cleanly: a
+rate-limited or retried API call is often the only explanation for a thin
+review, and that warning used to be discarded on success.
+
+A scheduled run deliberately does **not** copy its shared startup output into
+every PR's log — it reviews many PRs, and the same preamble repeated fifteen
+times would bury the review each log is there for. The orchestration log keeps
+that instead.
+
+Two cases cannot reach a PR's log: a malformed PR url, which belongs to no PR,
+and a crash before the script's first write. Both are near-impossible in
+practice — the dashboard builds the url it re-runs, and the server itself runs
+under the same `npx tsx` the run does — so the red note is all they produce. Its
+exit code is recorded; there is nothing in the log to read.
+
+#### How a run is kept from going on unnoticed
+
+Three bounds, only the first of which holds when nothing is watching:
+
+- **The run caps itself**, from inside the process, so this holds whatever
+  happens to the server. Each cap signals every agent in flight before exiting,
+  so `claude` is stopped rather than orphaned, and each covers the wedges the
+  per-agent timeout does not — a GitHub request with no timeout of its own, the
+  clone, a retry loop
+- **The agent has its own timeout.** 30 minutes per `claude` invocation, below
+  every run cap so it normally fires first and reports the more specific error
+- **The server reaps on exit.** `SIGTERM` and `SIGINT` stop every tracked run
+  before the server exits, so a launchd restart or a ctrl-c leaves nothing behind
+
+The caps are per phase, since one generous enough for reviewing would be useless
+as a bound on the API calls that come first. Each is derived from what its phase
+actually does:
+
+| Phase | Cap | Why |
+|---|---|---|
+| Starting up — pre-flight, skill fetch, auth, status refresh, PR search | 15 min | All API calls that should take seconds |
+| Reviewing (scheduled run) | 45 min | PRs are reviewed in parallel, so this is bounded by the slowest single agent however many there are — 30 for the agent plus slack |
+| A single-PR re-run | 40 min | One agent invocation plus a handful of API calls |
+
+> **Known gap:** the list of in-flight runs lives in the server's memory, and a
+> `SIGKILL` runs no handler. If the server is killed outright mid-run, the
+> dashboard stops showing that run and **Cancel run** is no longer offered for
+> it; the run's own cap is what ends it.
+
+Unlike the scheduled run and **⬡ Claude Code**, this path has no macOS
+dependency.
+
 ---
 
 ## Scheduling (macOS only)
@@ -235,7 +318,7 @@ bash setup-macos.sh
 
 ## Platform Notes
 
-**Scheduling, the dashboard server, and the "Open in Claude Code" button are macOS only.** The `setup-macos.sh` script, launchd plists, and `launchctl` commands are all macOS-specific.
+**Scheduling, the dashboard server, and the "Open in Claude Code" button are macOS only.** The `setup-macos.sh` script, launchd plists, and `launchctl` commands are all macOS-specific. "Open in Claude Code" needs a Terminal window because the session is interactive; **Re-run agent** does not, and works anywhere the server runs.
 
 The `run-reviews.ts` script itself is fully cross-platform. If you want to run this on another OS, only the scheduling layer needs to change:
 - **Linux** — use `cron`

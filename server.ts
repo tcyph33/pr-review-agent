@@ -20,6 +20,15 @@ import {
 import type { PendingReviewCommentInput } from "./lib/github.ts";
 import { loadReviews, saveReviews, deleteReviewLog } from "./lib/storage.ts";
 import { cloneDirectoryFor, deleteCloneDirectory, PR_REVIEWS_ROOT } from "./lib/clones.ts";
+import {
+  startRerun,
+  cancelRerun,
+  getRerun,
+  listReruns,
+  listFailedReruns,
+  dismissRerunOutcome,
+} from "./lib/reruns.ts";
+import type { RerunJob } from "./lib/reruns.ts";
 import type { PRReview } from "./lib/storage.ts";
 
 const __dirname      = path.dirname(fileURLToPath(import.meta.url));
@@ -274,23 +283,18 @@ async function launchClaudeCode(review: PRReview): Promise<void> {
 }
 
 /**
- * Opens a Terminal window re-running the review agent for a single PR.
+ * Starts a background re-run of the review agent for a single PR.
  *
- * Runs the CLI rather than reviewing in-process: an agent run takes minutes, so
- * a terminal is both a better progress display and interruptible, neither of
- * which an HTTP request can offer.
+ * Runs the CLI rather than reviewing in-process because an agent run takes
+ * minutes: the HTTP request returns at once and the run reports through its log.
  *
  * @param review - The review whose PR should be re-reviewed
- * @throws {Error} If the host is not macOS, or the stored url is not a PR url
+ * @returns The started job
+ * @throws {Error} If the stored url is not a PR url, or a re-run is already going
  */
-function launchRerun(review: PRReview): void {
-  const isMacOS = os.platform() === "darwin";
-  if (!isMacOS) {
-    throw new Error("Re-running from the dashboard is currently only supported on macOS");
-  }
-
-  // Rebuild the url from parsed parts rather than interpolating the stored
-  // string, so the shell command can only ever contain url-safe characters
+function launchRerun(review: PRReview): RerunJob {
+  // Rebuilt from parsed parts rather than passed through, so a stored url that
+  // is not a PR url is rejected here instead of confusing the review script
   const location = parsePRUrl(review.url);
   const isPRUrl = location !== null;
   if (!isPRUrl) {
@@ -298,15 +302,7 @@ function launchRerun(review: PRReview): void {
   }
   const prUrl = `https://github.com/${location.owner}/${location.repo}/pull/${location.pullNumber}`;
 
-  const command = `cd '${__dirname}' && npm run review -- '${prUrl}'`;
-  const script = [
-    `tell application "Terminal"`,
-    `  do script "${command.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`,
-    `  activate`,
-    `end tell`,
-  ].join("\n");
-
-  execSync(`osascript << 'APPLESCRIPT'\n${script}\nAPPLESCRIPT`);
+  return startRerun(review, prUrl, __dirname);
 }
 
 // ── Request handler ───────────────────────────────────────────────────────────
@@ -427,15 +423,73 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    const existingRerun: RerunJob | null = getRerun(reviewId);
+    const isAlreadyRunning: boolean = (existingRerun !== null);
+    if (isAlreadyRunning) {
+      res.writeHead(409, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        error: "A re-run is already in progress for this PR",
+        startedAt: existingRerun!.startedAt,
+      }));
+      return;
+    }
+
     try {
-      launchRerun(review!);
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ok: true }));
+      const job: RerunJob = launchRerun(review!);
+      // 202: the agent takes minutes, so the run is accepted rather than done
+      res.writeHead(202, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, startedAt: job.startedAt }));
     } catch (err) {
       const message: string = err instanceof Error ? err.message : String(err);
       res.writeHead(500, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: message }));
     }
+    return;
+  }
+
+  // ── DELETE /api/reviews/:id/rerun ─────────────────────────────────────────
+  // Cancels an in-progress re-run. Without this there is no way to stop a
+  // misclicked run, which the Terminal window used to provide with ctrl-c.
+  //
+  // This must stay above `DELETE /api/reviews/:id`, which matches on a prefix
+  // and would otherwise delete the whole review instead of stopping its run.
+  if (req.method === "DELETE" && url.pathname.endsWith("/rerun")) {
+    const reviewId: string = decodeURIComponent(
+      url.pathname.replace("/api/reviews/", "").replace("/rerun", "")
+    );
+
+    const wasCancelled: boolean = cancelRerun(reviewId);
+    if (!wasCancelled) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "No re-run is in progress for this PR" }));
+      return;
+    }
+
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
+  // ── POST /api/reviews/:id/dismiss-rerun-failure ───────────────────────────
+  if (req.method === "POST" && url.pathname.endsWith("/dismiss-rerun-failure")) {
+    const reviewId: string = decodeURIComponent(
+      url.pathname.replace("/api/reviews/", "").replace("/dismiss-rerun-failure", "")
+    );
+
+    dismissRerunOutcome(reviewId);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
+  // ── GET /api/reruns ───────────────────────────────────────────────────────
+  // Polled on its own because reviews.json is refreshed once a minute, which is
+  // far too coarse for showing a run in progress. Failures come back here too:
+  // a failed re-run leaves the stored review untouched, so nothing in
+  // reviews.json would ever say the re-run did not happen.
+  if (req.method === "GET" && url.pathname === "/api/reruns") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ running: listReruns(), failed: listFailedReruns() }));
     return;
   }
 
@@ -667,3 +721,33 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`🌐  Dashboard running at http://localhost:${PORT}/dashboard/`);
 });
+
+// ── Shutdown ──────────────────────────────────────────────────────────────────
+
+/**
+ * Stops every re-run this server started, then exits.
+ *
+ * A re-run runs in its own process group so that cancelling reaches the agent
+ * and not just the npm wrapper, which also means it would otherwise outlive the
+ * server — still running, but with nothing tracking it and no way left to stop
+ * it from the dashboard. launchd restarts the dashboard with SIGTERM, so this
+ * covers the ordinary case; a SIGKILL runs no handler, and the run's own cap in
+ * run-reviews.ts is what bounds it then.
+ *
+ * @param signal - The signal that asked the server to stop
+ */
+function shutdown(signal: string): void {
+  const runningReruns: RerunJob[] = listReruns();
+
+  const hasRunning = runningReruns.length > 0;
+  if (hasRunning) {
+    console.log(`\n🛑  ${signal}: stopping ${runningReruns.length} re-run(s) before exit.`);
+    for (const job of runningReruns) cancelRerun(job.reviewId);
+  }
+
+  server.close();
+  process.exit(0);
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

@@ -2,6 +2,7 @@
 
 import "dotenv/config";
 import { execFileSync, spawn } from "child_process";
+import type { ChildProcess } from "child_process";
 import https from "https";
 import os from "os";
 import fs from "fs";
@@ -30,6 +31,8 @@ import {
   cleanupOldLogs,
   PR_LOGS_PATH,
   RESULTS_PATH,
+  reviewLogPathForUrl,
+  writeToReviewLog,
 } from "./lib/storage.ts";
 import type { PRReview } from "./lib/storage.ts";
 import { notify, notifyFailure, buildNotificationSummary } from "./lib/notify.ts";
@@ -160,6 +163,17 @@ async function fetchSkillWithRetry(
 
 // ── Claude Code runner ────────────────────────────────────────────────────────
 
+/**
+ * Every agent process currently running.
+ *
+ * A set rather than a single process because a full run reviews its PRs in
+ * parallel, so several agents are in flight at once. Module-level because the
+ * run watchdog has to reach them from outside the reviews they belong to:
+ * exiting the script without signalling them would leave each `claude` running
+ * with no parent and nothing left to cap it.
+ */
+const activeAgentProcesses = new Set<ChildProcess>();
+
 async function runWithClaudeCode(
   skill: string,
   prUrl: string,
@@ -188,11 +202,13 @@ async function runWithClaudeCode(
     "Bash(grep*)",
   ].join(",");
 
-  const header = `=== PR Review: ${prUrl}\n=== Started: ${new Date().toISOString()}\n\n`;
-  if (!fs.existsSync(path.dirname(logPath))) {
-    fs.mkdirSync(path.dirname(logPath), { recursive: true });
-  }
-  fs.writeFileSync(logPath, header, "utf8");
+  // Appends rather than truncating: on a single-PR run the startup output is
+  // already in this file, and wiping it would throw away the only record of a
+  // failure that happened before the agent was reached
+  writeToReviewLog(
+    logPath,
+    `=== PR Review: ${prUrl}\n=== Agent started: ${new Date().toISOString()}\n\n`
+  );
 
   return new Promise<string>((resolve, reject) => {
     const proc = spawn("bash", [
@@ -208,6 +224,9 @@ async function runWithClaudeCode(
     proc.stdout.setEncoding("utf8");
     proc.stderr.setEncoding("utf8");
 
+    // Tracked so the run watchdog can take every agent down with the script
+    activeAgentProcesses.add(proc);
+
     const chunks: string[] = [];
     const errChunks: string[] = [];
     let timedOut = false;
@@ -222,11 +241,12 @@ async function runWithClaudeCode(
 
     proc.on("close", (code: number | null) => {
       clearTimeout(timer);
+      activeAgentProcesses.delete(proc);
       try { fs.unlinkSync(messagePath); } catch { /* best effort */ }
 
       if (timedOut) {
         const msg = `Timed out after 30 minutes`;
-        fs.appendFileSync(logPath, `\n=== FAILED: ${new Date().toISOString()}\n${msg}\n`);
+        writeToReviewLog(logPath, `\n=== FAILED: ${new Date().toISOString()}\n${msg}\n`);
         orchLog(`  ❌  Timed out: ${prUrl}`);
         reject(new Error(`Claude Code timed out: ${msg}`));
         return;
@@ -234,14 +254,27 @@ async function runWithClaudeCode(
 
       if (code !== 0) {
         const msg = errChunks.join("").trim() || `exited with code ${code}`;
-        fs.appendFileSync(logPath, `\n=== FAILED: ${new Date().toISOString()}\n${msg}\n`);
+        writeToReviewLog(logPath, `\n=== FAILED: ${new Date().toISOString()}\n${msg}\n`);
         orchLog(`  ❌  Failed: ${prUrl} — ${msg}`);
         reject(new Error(`Claude Code failed: ${msg}`));
         return;
       }
 
       const fullOutput = chunks.join("").trim();
-      fs.appendFileSync(logPath, fullOutput + `\n\n=== Completed: ${new Date().toISOString()}\n`);
+
+      // Logged on success too, not just on failure. The agent can exit zero
+      // having retried a rate-limited or failing API call, and that warning is
+      // often the only explanation for a thin or truncated review.
+      const agentWarnings = errChunks.join("").trim();
+      const hasWarnings = agentWarnings.length > 0;
+      const warningSection = hasWarnings
+        ? `\n=== Agent stderr (exited cleanly)\n${agentWarnings}\n`
+        : "";
+
+      writeToReviewLog(
+        logPath,
+        fullOutput + warningSection + `\n\n=== Completed: ${new Date().toISOString()}\n`
+      );
       orchLog(`  ✅  Completed: ${prUrl}`);
 
       // Extract just the structured review report from the full Claude Code output.
@@ -255,8 +288,9 @@ async function runWithClaudeCode(
 
     proc.on("error", (err: Error) => {
       clearTimeout(timer);
+      activeAgentProcesses.delete(proc);
       try { fs.unlinkSync(messagePath); } catch { /* best effort */ }
-      fs.appendFileSync(logPath, `\n=== FAILED: ${new Date().toISOString()}\n${err.message}\n`);
+      writeToReviewLog(logPath, `\n=== FAILED: ${new Date().toISOString()}\n${err.message}\n`);
       orchLog(`  ❌  Failed: ${prUrl} — ${err.message}`);
       reject(new Error(`Claude Code failed: ${err.message}`));
     });
@@ -400,6 +434,65 @@ async function reviewPR(
  * @param orchLog - Appends a line to the orchestration log
  * @param tee - Writes to both the console and the orchestration log
  */
+// Every cap is derived from what its phase actually does, and each sits above
+// the 30 minute per-agent timeout so that the more specific timeout normally
+// fires first and reports the better error.
+//
+// The startup phase is pre-flight, the skill fetch, auth, the status refresh and
+// the PR search — all API calls that should take seconds. Nothing here is slow
+// on purpose, so a quarter of an hour means something is wedged.
+const STARTUP_PHASE_CAP_MS = 15 * 60 * 1000;
+
+// PRs are reviewed in parallel, so the review phase is bounded by the slowest
+// single agent rather than by how many PRs there are. 30 for the agent, plus
+// slack for contention between concurrent agents and for saving the results.
+const REVIEW_PHASE_CAP_MS = 45 * 60 * 1000;
+
+// One agent invocation plus a handful of API calls
+const SINGLE_PR_RUN_CAP_MS = 40 * 60 * 1000;
+
+/**
+ * Caps a phase of the run from inside the process.
+ *
+ * The timeout in runWithClaudeCode covers one `claude` invocation and nothing
+ * else, so anything else that wedges — a GitHub request with no timeout of its
+ * own, the clone, a retry loop — would otherwise run until somebody noticed. A
+ * dashboard re-run has no window to notice in, and the server that started it
+ * may since have restarted, so the cap belongs here rather than in the caller:
+ * a run nothing is watching any more still ends.
+ *
+ * Per phase rather than one cap for the whole run, because a cap generous
+ * enough for reviewing would be useless as a bound on the API calls that come
+ * first. Each phase arms its own and clears it on the way out.
+ *
+ * @param capMs - How long the phase may take before the run is given up on
+ * @param label - What is being capped, for the log line and the notification
+ * @param tee - Writes to both the console and the orchestration log
+ * @returns Clears the cap, for when the phase finishes in time
+ */
+function startRunWatchdog(
+  capMs: number,
+  label: string,
+  tee: (msg: string) => void
+): () => void {
+  const watchdog = setTimeout(() => {
+    const minutes = Math.round(capMs / 60000);
+    tee(`\n❌  ${label} exceeded its ${minutes} minute cap — giving up.`);
+
+    // Signalled before exiting, because exiting first would orphan the agents
+    // rather than stop them: each would carry on with no parent and no cap
+    for (const agent of activeAgentProcesses) agent.kill("SIGTERM");
+
+    notify("PR Review Agent — Timed Out", `${label} exceeded ${minutes} minutes`);
+    process.exit(1);
+  }, capMs);
+
+  // Unreferenced so a cap never holds the process open past its own work
+  watchdog.unref();
+
+  return () => clearTimeout(watchdog);
+}
+
 async function reviewSinglePR(
   prUrl: string,
   skill: string,
@@ -416,6 +509,8 @@ async function reviewSinglePR(
     tee(`    Expected: https://github.com/<owner>/<repo>/pull/<number>`);
     process.exit(1);
   }
+
+  startRunWatchdog(SINGLE_PR_RUN_CAP_MS, `The review of ${prUrl}`, tee);
 
   const id = `${location.owner}/${location.repo}#${location.pullNumber}`;
   const prior = loadReviews().find((review) => review.id === id) ?? null;
@@ -459,10 +554,36 @@ async function main(): Promise<void> {
     fs.unlinkSync(tmpPath);
   }
 
-  const tee = (msg: string) => { console.log(msg); orchLog(msg); };
+  // A PR url as the first argument narrows the whole run to that one PR
+  const requestedPRUrl = process.argv[2] ?? null;
+  const isSinglePRRun = requestedPRUrl !== null;
+
+  // Resolved here, before anything can fail, so that on a single-PR run every
+  // line below also lands in that PR's own log. Pre-flight, auth and the skill
+  // fetch all run before the agent is reached, and a dashboard re-run has no
+  // terminal to report them to — this is how their failures stay diagnosable.
+  //
+  // A scheduled run gets no per-PR destination on purpose: it reviews many PRs,
+  // and copying the same shared preamble into every one of their logs would
+  // bury the review each is actually there for. The orchestration log keeps it.
+  const singlePRLogPath: string | null = isSinglePRRun
+    ? reviewLogPathForUrl(requestedPRUrl!)
+    : null;
+
+  const tee = (msg: string) => {
+    console.log(msg);
+    orchLog(msg);
+    const hasPRLog = singlePRLogPath !== null;
+    if (hasPRLog) writeToReviewLog(singlePRLogPath!, msg + "\n");
+  };
 
   tee("🚀  PR Review Agent starting...");
   tee(`📋  Log: ${orchLogPath}\n`);
+
+  // Armed before the first network call, so a wedged pre-flight, skill fetch,
+  // status refresh or PR search cannot hold the run open indefinitely. Each
+  // path clears it once it reaches work that deserves a cap of its own.
+  const clearStartupCap = startRunWatchdog(STARTUP_PHASE_CAP_MS, "Starting up", tee);
 
   // ── Pre-flight checks ──────────────────────────────────────────────────────
   try {
@@ -490,10 +611,8 @@ async function main(): Promise<void> {
   const username = await getAuthenticatedUsername(octokit);
   tee(`👤  Authenticated as ${username}`);
 
-  // A PR url as the first argument narrows the whole run to that one PR
-  const requestedPRUrl = process.argv[2] ?? null;
-  const isSinglePRRun = requestedPRUrl !== null;
   if (isSinglePRRun) {
+    clearStartupCap();
     await reviewSinglePR(requestedPRUrl, skill, username, orchLogPath, orchLog, tee);
     return;
   }
@@ -570,6 +689,16 @@ async function main(): Promise<void> {
   // ── Step 4: review each remaining PR in parallel via Claude Code ──────────
   tee(`\n📋  Reviewing ${toReview.length} PR(s) in parallel via Claude Code...\n`);
 
+  // The startup phase is over, so hand the cap to the reviewing. The new cap
+  // does not scale with the PR count: they run concurrently, so the phase is
+  // bounded by the slowest single agent however many there are.
+  clearStartupCap();
+  const clearReviewCap = startRunWatchdog(
+    REVIEW_PHASE_CAP_MS,
+    `Reviewing ${toReview.length} PR(s)`,
+    tee
+  );
+
   // A PR whose url would not parse cannot be reviewed, but still gets a record
   const reviewable  = toReview.filter((entry) => entry.location !== null);
   const unreviewable = toReview.filter((entry) => entry.location === null);
@@ -585,6 +714,8 @@ async function main(): Promise<void> {
     ...reviewed,
     ...unreviewable.map((entry) => buildUnreviewableRecord(entry.candidate.item, orchLog)),
   ];
+  clearReviewCap();
+
   const succeeded = results.filter(r => r.reviewStatus === "success").length;
   const failed    = results.filter(r => r.reviewStatus === "failed").length;
 

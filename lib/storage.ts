@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { parsePRUrl } from "./github.ts";
 import type { ReviewState, PRStatus, TriggerType } from "./github.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -168,4 +169,58 @@ export function applyStatusUpdates(
     const updated = statusMap.get(r.id);
     return updated ? { ...r, prStatus: updated } : r;
   });
+}
+
+// ── Per-PR review logs ────────────────────────────────────────────────────────
+
+/**
+ * Builds the per-PR log path for a PR url.
+ *
+ * @param prUrl - A GitHub pull request web url
+ * @returns The absolute log path, or null when the url is not a PR url
+ */
+export function reviewLogPathForUrl(prUrl: string): string | null {
+  const location = parsePRUrl(prUrl);
+
+  const isPRUrl = location !== null;
+  if (!isPRUrl) return null;
+
+  const filename = `${location.owner}-${location.repo}-${location.pullNumber}.log`;
+  return path.join(PR_LOGS_PATH, filename);
+}
+
+/**
+ * Per-PR log paths this process has already written to.
+ *
+ * A PR's log describes one run, so the first write of a run truncates it and
+ * every later write appends. Tracking which have been opened is what lets the
+ * whole run share one log: the startup output, the agent's output and the
+ * outcome all land in the same file without any one of them wiping the others.
+ */
+const openedReviewLogs = new Set<string>();
+
+/**
+ * Writes to a PR's review log, truncating it on this run's first write.
+ *
+ * @param logPath - Absolute path of the per-PR log
+ * @param text - Text to write, newlines included
+ */
+export function writeToReviewLog(logPath: string, text: string): void {
+  if (!fs.existsSync(path.dirname(logPath))) {
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+  }
+
+  const isFirstWrite = !openedReviewLogs.has(logPath);
+  if (isFirstWrite) {
+    openedReviewLogs.add(logPath);
+    fs.writeFileSync(logPath, text, "utf8");
+    return;
+  }
+
+  fs.appendFileSync(logPath, text, "utf8");
+}
+
+/** Forgets which logs have been opened. For tests only. */
+export function resetOpenedReviewLogs(): void {
+  openedReviewLogs.clear();
 }
