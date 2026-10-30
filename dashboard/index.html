@@ -657,6 +657,20 @@
     /* ── Per-finding comment queue ── */
     .finding-queue { margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--line); }
 
+    /* An ignored finding is dimmed the same amount as a queued one, but keeps its
+       title un-struck and takes a dashed border. Queued and ignored are opposite
+       decisions — "will be sent" against "deliberately not sent" — so they must
+       not read the same while scrolling a long list. */
+    .finding.ignored { border-style: dashed; }
+    .finding.ignored .finding-head,
+    .finding.ignored .finding-title,
+    .finding.ignored .finding-detail,
+    .finding.ignored .finding-refs { opacity: 0.45; }
+
+    .queue-label-ignored { color: var(--ink-mute); }
+    .queue-ignored-text { font-size: 0.78rem; color: var(--ink-mute); font-style: italic; margin-top: 4px; }
+    .queue-ignored-note { font-size: 0.74rem; color: var(--warn); margin-top: 6px; }
+
     /* A queued finding is dimmed and struck through to mark it handled, but the
        queue controls stay at full contrast so the drafted comment stays readable. */
     .finding.queued .finding-head,
@@ -1702,10 +1716,12 @@
          </div>`
       : "";
 
-    const isQueued = queuedCommentsByKey.has(findingKey(finding));
+    const isQueued  = queuedCommentsByKey.has(findingKey(finding));
+    const isIgnored = ignoredKeys.has(findingKey(finding));
+    const stateClass = isQueued ? " queued" : (isIgnored ? " ignored" : "");
 
     return `
-      <div class="finding${isQueued ? " queued" : ""}" id="finding-${index}">
+      <div class="finding${stateClass}" id="finding-${index}">
         <div class="finding-head">
           <span class="badge ${severityClass}">${severityLabel}</span>
           ${locationHtml}
@@ -1751,6 +1767,10 @@
   const QUEUE_STORAGE_PREFIX = "reviewQueue:";
 
   let queuedCommentsByKey = new Map();
+  // Findings deliberately not being commented on. Kept beside the drafts rather
+  // than inferred from their absence, because "I decided to skip this" and "I
+  // have not looked at this yet" are different states and the card shows both.
+  let ignoredKeys = new Set();
   let sentState       = null;   // { keys, positions, reviewId, url } once a draft exists on GitHub
   let lastPartition   = null;   // inline/can't-place split, computed against the diff
   let queueResultHtml = "";     // footer status message, preserved across re-renders
@@ -1765,7 +1785,10 @@
   }
 
   function loadReviewQueue(review, findings) {
-    const empty = { drafts: new Map(), sent: null, regenerated: false, orphanedPendingUrl: null };
+    const empty = {
+      drafts: new Map(), ignored: new Set(),
+      sent: null, regenerated: false, orphanedPendingUrl: null,
+    };
     try {
       const raw = localStorage.getItem(QUEUE_STORAGE_PREFIX + review.id);
       if (!raw) return empty;
@@ -1790,7 +1813,14 @@
         } else {
           localStorage.removeItem(QUEUE_STORAGE_PREFIX + review.id);
         }
-        return { drafts: new Map(), sent: null, regenerated: true, orphanedPendingUrl: carriedUrl };
+        // Ignores go with the drafts. A key embeds the finding's line, so a
+        // shifted line yields a new key anyway — and an ignore that did survive
+        // could silently hide a finding that now matters for a different reason
+        // at the same spot.
+        return {
+          drafts: new Map(), ignored: new Set(),
+          sent: null, regenerated: true, orphanedPendingUrl: carriedUrl,
+        };
       }
 
       // Drop drafts whose finding no longer exists in this review
@@ -1801,8 +1831,15 @@
         if (isLive) drafts.set(key, text);
       }
 
+      // Same liveness rule as the drafts: an ignore for a finding this review
+      // no longer contains is dropped rather than left to match something else
+      const ignored = new Set(
+        (Array.isArray(stored.ignored) ? stored.ignored : []).filter((key) => liveKeys.has(key))
+      );
+
       return {
         drafts,
+        ignored,
         sent: stored.sent ?? null,
         regenerated: false,
         orphanedPendingUrl: stored.orphanedPendingUrl ?? null,
@@ -1815,7 +1852,8 @@
 
   function saveReviewQueue(review) {
     try {
-      const hasAnything = queuedCommentsByKey.size > 0 || sentState !== null || orphanedPendingUrl !== null;
+      const hasAnything = queuedCommentsByKey.size > 0 || ignoredKeys.size > 0
+        || sentState !== null || orphanedPendingUrl !== null;
       if (!hasAnything) {
         localStorage.removeItem(QUEUE_STORAGE_PREFIX + review.id);
         return;
@@ -1823,6 +1861,7 @@
       localStorage.setItem(QUEUE_STORAGE_PREFIX + review.id, JSON.stringify({
         reviewedHeadSha: review.reviewedHeadSha ?? null,
         drafts: Object.fromEntries(queuedCommentsByKey),
+        ignored: [...ignoredKeys],
         sent: sentState,
         orphanedPendingUrl,
       }));
@@ -1862,9 +1901,27 @@
         </div>`;
     }
 
+    const isIgnored = ignoredKeys.has(findingKey(finding));
+    if (isIgnored) {
+      // Says it is a local decision, because a finding already pushed into a
+      // pending review is still sitting in GitHub's draft until it is rebuilt
+      const wasSent = sentState !== null && sentState.keys.includes(findingKey(finding));
+      const sentNote = wasSent
+        ? `<div class="queue-ignored-note">Still in the draft on GitHub — update the review to drop it.</div>`
+        : "";
+      return `
+        <span class="queue-label queue-label-ignored">⊘ Ignored</span>
+        <div class="queue-ignored-text">Won't be commented on.</div>
+        ${sentNote}
+        <div class="queue-editor-actions">
+          <button class="btn-queue-remove" onclick="unignoreFinding(${index})">Undo</button>
+        </div>`;
+    }
+
     return `
       <div class="queue-actions">
         <button class="btn-queue" onclick="openCommentEditor(${index})">Queue comment</button>
+        <button class="btn-queue-remove" onclick="ignoreFinding(${index})">Ignore</button>
       </div>`;
   }
 
@@ -1876,25 +1933,48 @@
     if (!queueElement || !findingElement) return;
 
     queueElement.innerHTML = renderFindingQueue(index);
-    const isQueued = queuedCommentsByKey.has(findingKey(currentFindings[index]));
-    findingElement.classList.toggle("queued", isQueued);
+    const key = findingKey(currentFindings[index]);
+    findingElement.classList.toggle("queued", queuedCommentsByKey.has(key));
+    findingElement.classList.toggle("ignored", ignoredKeys.has(key));
   }
 
   // Readable without opening the modal, so the card footer can warn before a
   // re-run clears drafts the user may have forgotten about
-  function queuedDraftCount(reviewId) {
+  function storedQueueCounts(reviewId) {
+    const empty = { drafts: 0, ignored: 0 };
     try {
       const raw = localStorage.getItem(QUEUE_STORAGE_PREFIX + reviewId);
-      if (!raw) return 0;
-      return Object.keys(JSON.parse(raw).drafts ?? {}).length;
+      if (!raw) return empty;
+      const stored = JSON.parse(raw);
+      return {
+        drafts: Object.keys(stored.drafts ?? {}).length,
+        ignored: Array.isArray(stored.ignored) ? stored.ignored.length : 0,
+      };
     } catch {
-      return 0;
+      return empty;
     }
   }
 
-  function draftWarningText(draftCount) {
-    return `${draftCount} comment${draftCount === 1 ? "" : "s"} queued for this review will be cleared once the new one lands.`
-      + ` Start the review on GitHub first if you want to keep ${draftCount === 1 ? "it" : "them"}.`;
+  // Both halves are named, because a re-review clears ignores as well as drafts
+  // and losing a deliberate skip is as annoying as losing a drafted comment
+  function draftWarningText(counts) {
+    const parts = [];
+    if (counts.drafts > 0) {
+      parts.push(`${counts.drafts} queued comment${counts.drafts === 1 ? "" : "s"}`);
+    }
+    if (counts.ignored > 0) {
+      parts.push(`${counts.ignored} ignored finding${counts.ignored === 1 ? "" : "s"}`);
+    }
+
+    const warning = `${parts.join(" and ")} for this review will be cleared once the new one lands.`;
+
+    // Only a draft can be preserved, by pushing it to GitHub first. An ignore
+    // lives nowhere else, so offering that advice for one would be misleading.
+    const canPreserve = counts.drafts > 0;
+    if (!canPreserve) return warning;
+
+    return warning
+      + ` Start the review on GitHub first if you want to keep ${counts.drafts === 1 ? "it" : "them"}.`;
   }
 
   // Returns the run's start time, which the caller records so the card shows
@@ -1917,13 +1997,14 @@
   // Two stages when drafts exist: the first click warns, the second launches
   async function rerunReview(button) {
     const reviewId = button.getAttribute("data-id");
-    const draftCount = queuedDraftCount(reviewId);
+    const counts = storedQueueCounts(reviewId);
+    const atRisk = counts.drafts + counts.ignored;
 
-    const needsWarning = draftCount > 0 && button.dataset.warned !== "true";
+    const needsWarning = atRisk > 0 && button.dataset.warned !== "true";
     if (needsWarning) {
       button.dataset.warned = "true";
-      button.textContent = `${draftCount} queued — click to re-run anyway`;
-      button.title = draftWarningText(draftCount);
+      button.textContent = `${atRisk} will be cleared — click to re-run anyway`;
+      button.title = draftWarningText(counts);
       return;
     }
 
@@ -2016,7 +2097,10 @@
       return;
     }
 
-    queuedCommentsByKey.set(findingKey(currentFindings[index]), text);
+    const key = findingKey(currentFindings[index]);
+    queuedCommentsByKey.set(key, text);
+    // Queued and ignored are exclusive — deciding to comment undoes the skip
+    ignoredKeys.delete(key);
     findingsBeingEdited.delete(index);
     saveReviewQueue(currentReview);
     refreshFindingQueue(index);
@@ -2035,10 +2119,33 @@
 
   // Clearing is local only — a pending review already on GitHub is left alone,
   // so the message hands back its link rather than implying it was cleaned up.
+  function ignoreFinding(index) {
+    const key = findingKey(currentFindings[index]);
+
+    // Any draft goes with it: keeping one would leave text queued for a finding
+    // the card says is being skipped
+    queuedCommentsByKey.delete(key);
+    ignoredKeys.add(key);
+    findingsBeingEdited.delete(index);
+
+    saveReviewQueue(currentReview);
+    refreshFindingQueue(index);
+    queueResultHtml = "";
+    refreshQueuePartition();
+  }
+
+  function unignoreFinding(index) {
+    ignoredKeys.delete(findingKey(currentFindings[index]));
+    saveReviewQueue(currentReview);
+    refreshFindingQueue(index);
+    renderQueueFooter();
+  }
+
   function clearQueuedComments() {
     const pendingUrl = sentState === null ? null : sentState.url;
 
     queuedCommentsByKey.clear();
+    ignoredKeys.clear();
     findingsBeingEdited.clear();
     sentState = null;
     lastPartition = null;
@@ -2284,12 +2391,31 @@
         if (removedSinceSent > 0) changes.push(`${removedSinceSent} removed`);
         status += ` · ${changes.join(", ")}`;
       }
+    } else if (queuedCount === 0) {
+      status = "Nothing queued";
     } else {
       status = `${queuedCount} comment${queuedCount === 1 ? "" : "s"} queued`;
     }
 
     const hasSplit = lastPartition !== null && lastPartition.unplaceable.length > 0;
     if (hasSplit) status += ` · ${lastPartition.placeable.length} can be placed inline`;
+
+    // Named rather than left implicit: when you submit, what you deliberately
+    // left out is as much a part of the review as what you queued
+    const ignoredCount = ignoredKeys.size;
+    if (ignoredCount > 0) status += ` · ${ignoredCount} ignored`;
+
+    // An ignore is local. A finding already pushed into the pending review is
+    // still in GitHub's draft until the review is rebuilt from the local set.
+    const ignoredStillSent = hasSent
+      ? sentState.keys.filter((key) => ignoredKeys.has(key)).length
+      : 0;
+    if (ignoredStillSent > 0) {
+      sections.push(
+        `<div class="queue-notice">${ignoredStillSent} ignored finding${ignoredStillSent === 1 ? " is" : "s are"}`
+        + ` still in the draft on GitHub. Update the review to drop ${ignoredStillSent === 1 ? "it" : "them"}.</div>`
+      );
+    }
 
     const buttons = [];
     if (hasSent) {
@@ -2327,7 +2453,8 @@
 
   function renderQueueFooter() {
     const footerElement = document.getElementById("review-modal-footer");
-    const isVisible = queuedCommentsByKey.size > 0 || sentState !== null || wasRegenerated || queueResultHtml !== "";
+    const isVisible = queuedCommentsByKey.size > 0 || ignoredKeys.size > 0
+      || sentState !== null || wasRegenerated || queueResultHtml !== "";
 
     footerElement.style.display = isVisible ? "" : "none";
     if (!isVisible) {
@@ -2598,6 +2725,7 @@
     // Restore drafts before rendering, so findings show as queued straight away
     const restored = loadReviewQueue(review, parsed ? parsed.findings : []);
     queuedCommentsByKey = restored.drafts;
+    ignoredKeys        = restored.ignored;
     sentState          = restored.sent;
     wasRegenerated     = restored.regenerated;
     orphanedPendingUrl = restored.orphanedPendingUrl;
@@ -2886,9 +3014,10 @@
     `;
     }).join('');
     // Warn before a re-run discards drafts queued against the current findings
-    const draftCount = queuedDraftCount(id);
-    document.getElementById('commits-rerun-note').innerHTML = draftCount > 0
-      ? `<div class="queue-notice">${escHtml(draftWarningText(draftCount))}</div>`
+    const counts = storedQueueCounts(id);
+    const hasAtRisk = counts.drafts + counts.ignored > 0;
+    document.getElementById('commits-rerun-note').innerHTML = hasAtRisk
+      ? `<div class="queue-notice">${escHtml(draftWarningText(counts))}</div>`
       : "";
 
     document.getElementById('commits-modal').classList.add('visible');
